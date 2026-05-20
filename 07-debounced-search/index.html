@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>07 - Debounced Search</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .search-wrapper { position: relative; width: 420px; }
+    .search-input { width: 100%; padding: 12px 44px 12px 16px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 15px; }
+    .search-input:focus { outline: none; border-color: #4f46e5; }
+    .search-icon { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); color: #888; font-size: 16px; }
+    .dropdown { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); overflow: hidden; z-index: 100; }
+    .dropdown-item { padding: 11px 16px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+    .dropdown-item:hover, .dropdown-item.highlighted { background: #eef2ff; color: #4f46e5; }
+    .item-icon { font-size: 16px; }
+    .no-results { padding: 14px 16px; color: #888; font-size: 14px; }
+    .loading-dots { display: flex; gap: 4px; padding: 14px 16px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: #4f46e5; animation: bounce 1s ease-in-out infinite; }
+    .dot:nth-child(2) { animation-delay: 0.15s; }
+    .dot:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes bounce { 0%, 80%, 100% { transform: scaleY(1); } 40% { transform: scaleY(1.5); } }
+    .debug { margin-top: 20px; background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; font-size: 13px; font-family: monospace; width: 420px; }
+    .debug span { color: #9cdcfe; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const FRUITS = ['Apple','Apricot','Avocado','Banana','Blueberry','Cherry','Coconut','Grape','Kiwi','Lemon','Lime','Mango','Melon','Orange','Papaya','Peach','Pear','Pineapple','Plum','Pomegranate','Raspberry','Strawberry','Watermelon'];
+
+    function useDebounce(value, delay) {
+      const [debouncedValue, setDebouncedValue] = useState(value);
+      useEffect(() => {
+        const timer = setTimeout(() => setDebouncedValue(value), delay);
+        return () => clearTimeout(timer);
+      }, [value, delay]);
+      return debouncedValue;
+    }
+
+    function fakeSearch(query) {
+      return new Promise(resolve => {
+        setTimeout(() => {
+          const results = FRUITS.filter(f => f.toLowerCase().includes(query.toLowerCase()));
+          resolve(results);
+        }, 400);
+      });
+    }
+
+    function SearchBox() {
+      const [query, setQuery] = useState('');
+      const [results, setResults] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [open, setOpen] = useState(false);
+      const [highlighted, setHighlighted] = useState(-1);
+      const [apiCallCount, setApiCallCount] = useState(0);
+      const [keystrokeCount, setKeystrokeCount] = useState(0);
+      const inputRef = useRef(null);
+      const debouncedQuery = useDebounce(query, 350);
+
+      useEffect(() => {
+        if (!debouncedQuery.trim()) { setResults([]); setLoading(false); return; }
+        setLoading(true);
+        setApiCallCount(c => c + 1);
+        fakeSearch(debouncedQuery).then(data => {
+          setResults(data);
+          setLoading(false);
+          setOpen(true);
+          setHighlighted(-1);
+        });
+      }, [debouncedQuery]);
+
+      function handleChange(e) {
+        setQuery(e.target.value);
+        setKeystrokeCount(c => c + 1);
+        setOpen(true);
+      }
+
+      function handleKeyDown(e) {
+        if (!open) return;
+        if (e.key === 'ArrowDown') { e.preventDefault(); setHighlighted(h => Math.min(h + 1, results.length - 1)); }
+        if (e.key === 'ArrowUp') { e.preventDefault(); setHighlighted(h => Math.max(h - 1, -1)); }
+        if (e.key === 'Enter' && highlighted >= 0) { setQuery(results[highlighted]); setOpen(false); }
+        if (e.key === 'Escape') { setOpen(false); }
+      }
+
+      return (
+        <>
+          <div className="search-wrapper">
+            <input
+              ref={inputRef}
+              className="search-input"
+              value={query}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onFocus={() => query && setOpen(true)}
+              onBlur={() => setTimeout(() => setOpen(false), 150)}
+              placeholder="Search fruits... (try 'a')"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={open}
+            />
+            <span className="search-icon">{loading ? '⏳' : '🔍'}</span>
+
+            {open && query && (
+              <div className="dropdown" role="listbox">
+                {loading && (
+                  <div className="loading-dots">
+                    <div className="dot" /><div className="dot" /><div className="dot" />
+                  </div>
+                )}
+                {!loading && results.length === 0 && <div className="no-results">No results for "{query}"</div>}
+                {!loading && results.map((item, i) => (
+                  <div
+                    key={item}
+                    className={`dropdown-item ${highlighted === i ? 'highlighted' : ''}`}
+                    role="option"
+                    aria-selected={highlighted === i}
+                    onMouseDown={() => { setQuery(item); setOpen(false); }}
+                    onMouseEnter={() => setHighlighted(i)}
+                  >
+                    <span className="item-icon">🍎</span>
+                    {item}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="debug">
+            <div>Keystrokes: <span>{keystrokeCount}</span></div>
+            <div>API calls made: <span>{apiCallCount}</span> (debounced 350ms — saves {keystrokeCount - apiCallCount} unnecessary calls)</div>
+            <div>Debounced value: <span>"{debouncedQuery}"</span></div>
+          </div>
+        </>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>07 — Debounced Search</h1>
+          <p className="desc">Features: 350ms debounce hook, keyboard navigation (↑↓ Enter Esc), loading state, API call counter shows saved requests.</p>
+          <SearchBox />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

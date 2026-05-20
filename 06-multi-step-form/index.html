@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>06 - Multi-Step Form</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .wizard { width: 520px; background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+    .stepper { display: flex; margin-bottom: 32px; position: relative; }
+    .stepper::before { content:''; position: absolute; top: 16px; left: 0; right: 0; height: 2px; background: #e0e0e0; z-index: 0; }
+    .step { flex: 1; display: flex; flex-direction: column; align-items: center; position: relative; z-index: 1; }
+    .step-circle { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; border: 2px solid #e0e0e0; background: #fff; color: #999; }
+    .step-circle.done { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+    .step-circle.active { border-color: #4f46e5; color: #4f46e5; }
+    .step-label { font-size: 11px; margin-top: 6px; color: #999; }
+    .step-label.active { color: #4f46e5; font-weight: 600; }
+    .form-group { margin-bottom: 18px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #374151; }
+    input, select { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
+    input:focus, select:focus { outline: 2px solid #4f46e5; border-color: transparent; }
+    .error-msg { color: #dc2626; font-size: 12px; margin-top: 4px; }
+    .actions { display: flex; gap: 10px; margin-top: 24px; justify-content: space-between; }
+    .btn { padding: 10px 22px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; }
+    .btn-primary { background: #4f46e5; color: #fff; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-secondary { background: #e5e7eb; color: #333; }
+    .btn-secondary:hover { background: #d1d5db; }
+    .summary { font-size: 14px; line-height: 2; }
+    .summary span { font-weight: 600; }
+    .success { text-align: center; padding: 20px 0; }
+    .success h2 { color: #059669; margin-bottom: 10px; }
+    .check { font-size: 48px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState } = React;
+
+    const STEPS = ['Personal', 'Account', 'Review'];
+
+    const validators = {
+      0: (d) => {
+        const errors = {};
+        if (!d.firstName.trim()) errors.firstName = 'First name is required';
+        if (!d.lastName.trim()) errors.lastName = 'Last name is required';
+        if (!d.email.match(/^[^@]+@[^@]+\.[^@]+$/)) errors.email = 'Valid email required';
+        return errors;
+      },
+      1: (d) => {
+        const errors = {};
+        if (d.username.length < 3) errors.username = 'Username must be at least 3 characters';
+        if (d.password.length < 6) errors.password = 'Password must be at least 6 characters';
+        if (d.password !== d.confirm) errors.confirm = 'Passwords do not match';
+        return errors;
+      },
+    };
+
+    function MultiStepForm() {
+      const [step, setStep] = useState(0);
+      const [done, setDone] = useState(false);
+      const [data, setData] = useState({ firstName: '', lastName: '', email: '', username: '', password: '', confirm: '', plan: 'free' });
+      const [errors, setErrors] = useState({});
+
+      function update(field, value) {
+        setData(d => ({ ...d, [field]: value }));
+        setErrors(e => ({ ...e, [field]: undefined }));
+      }
+
+      function next() {
+        if (step < 2) {
+          const errs = validators[step]?.(data) || {};
+          if (Object.keys(errs).length) { setErrors(errs); return; }
+          setErrors({});
+          setStep(s => s + 1);
+        } else {
+          setDone(true);
+        }
+      }
+
+      function back() { setStep(s => s - 1); setErrors({}); }
+
+      if (done) return (
+        <div className="wizard">
+          <div className="success">
+            <div className="check">✅</div>
+            <h2>Account Created!</h2>
+            <p style={{ color: '#666' }}>Welcome, {data.firstName}! Your account has been set up successfully.</p>
+            <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={() => { setDone(false); setStep(0); setData({ firstName:'',lastName:'',email:'',username:'',password:'',confirm:'',plan:'free' }); }}>Start Over</button>
+          </div>
+        </div>
+      );
+
+      return (
+        <div className="wizard">
+          <div className="stepper">
+            {STEPS.map((label, i) => (
+              <div className="step" key={label}>
+                <div className={`step-circle ${i < step ? 'done' : i === step ? 'active' : ''}`}>
+                  {i < step ? '✓' : i + 1}
+                </div>
+                <span className={`step-label ${i === step ? 'active' : ''}`}>{label}</span>
+              </div>
+            ))}
+          </div>
+
+          {step === 0 && (
+            <>
+              <div className="form-group">
+                <label>First Name</label>
+                <input value={data.firstName} onChange={e => update('firstName', e.target.value)} placeholder="John" />
+                {errors.firstName && <p className="error-msg">{errors.firstName}</p>}
+              </div>
+              <div className="form-group">
+                <label>Last Name</label>
+                <input value={data.lastName} onChange={e => update('lastName', e.target.value)} placeholder="Doe" />
+                {errors.lastName && <p className="error-msg">{errors.lastName}</p>}
+              </div>
+              <div className="form-group">
+                <label>Email</label>
+                <input value={data.email} onChange={e => update('email', e.target.value)} placeholder="john@example.com" type="email" />
+                {errors.email && <p className="error-msg">{errors.email}</p>}
+              </div>
+            </>
+          )}
+
+          {step === 1 && (
+            <>
+              <div className="form-group">
+                <label>Username</label>
+                <input value={data.username} onChange={e => update('username', e.target.value)} placeholder="johndoe" />
+                {errors.username && <p className="error-msg">{errors.username}</p>}
+              </div>
+              <div className="form-group">
+                <label>Password</label>
+                <input type="password" value={data.password} onChange={e => update('password', e.target.value)} placeholder="Min 6 characters" />
+                {errors.password && <p className="error-msg">{errors.password}</p>}
+              </div>
+              <div className="form-group">
+                <label>Confirm Password</label>
+                <input type="password" value={data.confirm} onChange={e => update('confirm', e.target.value)} placeholder="Repeat password" />
+                {errors.confirm && <p className="error-msg">{errors.confirm}</p>}
+              </div>
+              <div className="form-group">
+                <label>Plan</label>
+                <select value={data.plan} onChange={e => update('plan', e.target.value)}>
+                  <option value="free">Free</option>
+                  <option value="pro">Pro — $9/mo</option>
+                  <option value="enterprise">Enterprise — $49/mo</option>
+                </select>
+              </div>
+            </>
+          )}
+
+          {step === 2 && (
+            <div className="summary">
+              <p>Name: <span>{data.firstName} {data.lastName}</span></p>
+              <p>Email: <span>{data.email}</span></p>
+              <p>Username: <span>{data.username}</span></p>
+              <p>Plan: <span style={{ textTransform: 'capitalize' }}>{data.plan}</span></p>
+              <p style={{ marginTop: 12, color: '#888', fontSize: 13 }}>Please review your info before submitting.</p>
+            </div>
+          )}
+
+          <div className="actions">
+            <div>{step > 0 && <button className="btn btn-secondary" onClick={back}>← Back</button>}</div>
+            <button className="btn btn-primary" onClick={next}>
+              {step === 2 ? 'Submit' : 'Next →'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>06 — Multi-Step Form Wizard</h1>
+          <p className="desc">Features: Per-step validation, progress stepper, back/next navigation, review step, success state.</p>
+          <MultiStepForm />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

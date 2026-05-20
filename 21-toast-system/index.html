@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>21 - Toast / Notification System</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .btn { padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .btn-info { background: #dbeafe; color: #1e40af; }
+    .btn-success { background: #d1fae5; color: #065f46; }
+    .btn-warning { background: #fef3c7; color: #92400e; }
+    .btn-error { background: #fee2e2; color: #991b1b; }
+    .btn-info:hover { background: #bfdbfe; }
+    .btn-success:hover { background: #a7f3d0; }
+    .btn-warning:hover { background: #fde68a; }
+    .btn-error:hover { background: #fecaca; }
+    .position-select { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+    .pos-btn { padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; font-size: 12px; background: #fff; }
+    .pos-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+    .toast-container { position: fixed; display: flex; flex-direction: column; gap: 10px; z-index: 9999; max-width: 360px; }
+    .top-right { top: 20px; right: 20px; }
+    .top-left { top: 20px; left: 20px; }
+    .bottom-right { bottom: 20px; right: 20px; flex-direction: column-reverse; }
+    .bottom-left { bottom: 20px; left: 20px; flex-direction: column-reverse; }
+    .top-center { top: 20px; left: 50%; transform: translateX(-50%); align-items: center; }
+    .toast { display: flex; align-items: flex-start; gap: 10px; padding: 14px 16px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); min-width: 280px; max-width: 360px; animation: slideIn 0.3s ease; position: relative; }
+    .toast.exiting { animation: slideOut 0.3s ease forwards; }
+    @keyframes slideIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
+    @keyframes slideOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(40px); } }
+    .toast.info { background: #fff; border-left: 4px solid #3b82f6; }
+    .toast.success { background: #fff; border-left: 4px solid #10b981; }
+    .toast.warning { background: #fff; border-left: 4px solid #f59e0b; }
+    .toast.error { background: #fff; border-left: 4px solid #ef4444; }
+    .toast-icon { font-size: 18px; flex-shrink: 0; }
+    .toast-body { flex: 1; }
+    .toast-title { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+    .toast-msg { font-size: 12px; color: #666; line-height: 1.4; }
+    .toast-close { background: none; border: none; cursor: pointer; color: #aaa; font-size: 16px; padding: 0; flex-shrink: 0; }
+    .toast-close:hover { color: #333; }
+    .progress { position: absolute; bottom: 0; left: 0; height: 3px; border-radius: 0 0 8px 8px; }
+    .progress.info { background: #3b82f6; }
+    .progress.success { background: #10b981; }
+    .progress.warning { background: #f59e0b; }
+    .progress.error { background: #ef4444; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="toast-root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, createContext, useContext, useCallback, useRef } = React;
+
+    const ToastContext = createContext(null);
+
+    const ICONS = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
+    const DURATION = 4000;
+
+    function ToastItem({ toast, onRemove }) {
+      const [exiting, setExiting] = useState(false);
+      const [progress, setProgress] = useState(100);
+      const intervalRef = useRef(null);
+      const startRef = useRef(Date.now());
+
+      useEffect(() => {
+        if (toast.duration === Infinity) return;
+        intervalRef.current = setInterval(() => {
+          const elapsed = Date.now() - startRef.current;
+          const remaining = Math.max(0, 100 - (elapsed / toast.duration) * 100);
+          setProgress(remaining);
+          if (remaining === 0) {
+            clearInterval(intervalRef.current);
+            handleClose();
+          }
+        }, 50);
+        return () => clearInterval(intervalRef.current);
+      }, []);
+
+      function handleClose() {
+        setExiting(true);
+        setTimeout(() => onRemove(toast.id), 300);
+      }
+
+      return (
+        <div className={`toast ${toast.type} ${exiting ? 'exiting' : ''}`}>
+          <span className="toast-icon">{ICONS[toast.type]}</span>
+          <div className="toast-body">
+            <div className="toast-title">{toast.title}</div>
+            {toast.message && <div className="toast-msg">{toast.message}</div>}
+          </div>
+          <button className="toast-close" onClick={handleClose}>✕</button>
+          {toast.duration !== Infinity && (
+            <div className={`progress ${toast.type}`} style={{ width: `${progress}%`, transition: 'width 0.05s linear' }} />
+          )}
+        </div>
+      );
+    }
+
+    function ToastContainer({ toasts, position, onRemove }) {
+      return ReactDOM.createPortal(
+        <div className={`toast-container ${position}`}>
+          {toasts.map(t => <ToastItem key={t.id} toast={t} onRemove={onRemove} />)}
+        </div>,
+        document.getElementById('toast-root')
+      );
+    }
+
+    function ToastProvider({ children }) {
+      const [toasts, setToasts] = useState([]);
+      const [position, setPosition] = useState('top-right');
+
+      const toast = useCallback(({ type = 'info', title, message, duration = DURATION }) => {
+        const id = Date.now() + Math.random();
+        setToasts(prev => [...prev.slice(-4), { id, type, title, message, duration }]);
+        return id;
+      }, []);
+
+      const removeToast = useCallback((id) => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, []);
+
+      return (
+        <ToastContext.Provider value={{ toast, position, setPosition }}>
+          {children}
+          <ToastContainer toasts={toasts} position={position} onRemove={removeToast} />
+        </ToastContext.Provider>
+      );
+    }
+
+    function useToast() { return useContext(ToastContext); }
+
+    const POSITIONS = ['top-right', 'top-left', 'top-center', 'bottom-right', 'bottom-left'];
+
+    function Demo() {
+      const { toast, position, setPosition } = useToast();
+
+      const samples = [
+        { type: 'info', title: 'Update Available', message: 'Version 2.1.0 is ready to install.', class: 'btn-info' },
+        { type: 'success', title: 'Saved!', message: 'Your changes have been saved successfully.', class: 'btn-success' },
+        { type: 'warning', title: 'Low Storage', message: 'You are running low on disk space.', class: 'btn-warning' },
+        { type: 'error', title: 'Upload Failed', message: 'Failed to upload file. Please try again.', class: 'btn-error' },
+      ];
+
+      return (
+        <>
+          <div>
+            <p style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>Position:</p>
+            <div className="position-select">
+              {POSITIONS.map(p => (
+                <button key={p} className={`pos-btn ${position === p ? 'active' : ''}`} onClick={() => setPosition(p)}>{p}</button>
+              ))}
+            </div>
+          </div>
+          <div className="controls">
+            {samples.map(s => (
+              <button key={s.type} className={`btn ${s.class}`} onClick={() => toast(s)}>
+                {ICONS[s.type]} {s.type.charAt(0).toUpperCase() + s.type.slice(1)}
+              </button>
+            ))}
+            <button className="btn" style={{ background: '#e5e7eb', color: '#333' }} onClick={() => toast({ type: 'info', title: 'Persistent Toast', duration: Infinity })}>
+              📌 Persistent (no auto-dismiss)
+            </button>
+          </div>
+        </>
+      );
+    }
+
+    function App() {
+      return (
+        <ToastProvider>
+          <h1>21 — Toast / Notification System</h1>
+          <p className="desc">Features: Context + Portal, auto-dismiss with progress bar, queue (max 5), configurable position, persistent toasts.</p>
+          <Demo />
+        </ToastProvider>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

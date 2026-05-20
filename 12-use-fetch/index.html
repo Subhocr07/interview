@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>12 - useFetch Hook</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .controls { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+    button { padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .btn-primary { background: #4f46e5; color: #fff; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-secondary { background: #e5e7eb; color: #333; }
+    .btn-secondary:hover { background: #d1d5db; }
+    .btn-success { background: #059669; color: #fff; }
+    .status-bar { display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; }
+    .badge { padding: 3px 10px; border-radius: 20px; font-weight: 600; font-size: 12px; }
+    .badge-loading { background: #fef3c7; color: #92400e; }
+    .badge-success { background: #d1fae5; color: #065f46; }
+    .badge-error { background: #fee2e2; color: #991b1b; }
+    .badge-cached { background: #dbeafe; color: #1e40af; }
+    .card-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; max-width: 620px; }
+    .card { background: #fff; border-radius: 8px; padding: 14px; border: 1px solid #e0e0e0; }
+    .card img { width: 48px; height: 48px; border-radius: 50%; margin-bottom: 8px; }
+    .card-name { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+    .card-username { color: #888; font-size: 12px; }
+    .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 4px; }
+    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+    .sk-circle { width: 48px; height: 48px; border-radius: 50%; margin-bottom: 8px; }
+    .sk-line { height: 12px; margin-bottom: 6px; }
+    .sk-line.short { width: 60%; }
+    .error-box { background: #fef2f2; border: 1px solid #fca5a5; border-radius: 8px; padding: 16px; color: #dc2626; font-size: 14px; max-width: 400px; }
+    .debug { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 8px; font-size: 12px; font-family: monospace; margin-top: 20px; max-width: 620px; }
+    .debug span { color: #89b4fa; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // Simple in-memory cache
+    const cache = new Map();
+
+    function useFetch(url) {
+      const [state, setState] = useState({ data: null, loading: false, error: null, fromCache: false });
+      const abortRef = useRef(null);
+
+      const fetchData = useCallback(async (forceRefresh = false) => {
+        if (!url) return;
+
+        // Serve from cache unless forced refresh
+        if (!forceRefresh && cache.has(url)) {
+          setState({ data: cache.get(url), loading: false, error: null, fromCache: true });
+          return;
+        }
+
+        // Cancel previous in-flight request
+        abortRef.current?.abort();
+        abortRef.current = new AbortController();
+
+        setState(s => ({ ...s, loading: true, error: null, fromCache: false }));
+
+        try {
+          const res = await fetch(url, { signal: abortRef.current.signal });
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          const data = await res.json();
+          cache.set(url, data);
+          setState({ data, loading: false, error: null, fromCache: false });
+        } catch (err) {
+          if (err.name === 'AbortError') return; // cancelled — ignore
+          setState(s => ({ ...s, loading: false, error: err.message }));
+        }
+      }, [url]);
+
+      useEffect(() => {
+        fetchData();
+        return () => abortRef.current?.abort();
+      }, [fetchData]);
+
+      return { ...state, refetch: () => fetchData(true) };
+    }
+
+    const ENDPOINTS = [
+      { label: 'Users', url: 'https://jsonplaceholder.typicode.com/users' },
+      { label: '🚫 Bad URL (error)', url: 'https://jsonplaceholder.typicode.com/nonexistent' },
+    ];
+
+    function UserCard({ user }) {
+      const seed = user.id;
+      return (
+        <div className="card">
+          <img src={`https://i.pravatar.cc/48?img=${seed}`} alt={user.name} />
+          <div className="card-name">{user.name}</div>
+          <div className="card-username">@{user.username}</div>
+        </div>
+      );
+    }
+
+    function SkeletonCard() {
+      return (
+        <div className="card">
+          <div className="skeleton sk-circle" />
+          <div className="skeleton sk-line" />
+          <div className="skeleton sk-line short" />
+        </div>
+      );
+    }
+
+    function Demo() {
+      const [selectedUrl, setSelectedUrl] = useState(ENDPOINTS[0].url);
+      const { data, loading, error, fromCache, refetch } = useFetch(selectedUrl);
+      const [fetchCount, setFetchCount] = useState(0);
+
+      useEffect(() => {
+        if (!loading) setFetchCount(c => c + 1);
+      }, [loading]);
+
+      return (
+        <>
+          <div className="controls">
+            {ENDPOINTS.map(ep => (
+              <button key={ep.url} className={selectedUrl === ep.url ? 'btn-primary' : 'btn-secondary'} onClick={() => setSelectedUrl(ep.url)}>
+                {ep.label}
+              </button>
+            ))}
+            <button className="btn-success" onClick={refetch}>⟳ Force Refresh (bypass cache)</button>
+          </div>
+
+          <div className="status-bar">
+            {loading && <span className="badge badge-loading">⏳ Loading...</span>}
+            {!loading && !error && data && <span className="badge badge-success">✓ Success</span>}
+            {error && <span className="badge badge-error">✕ Error</span>}
+            {fromCache && <span className="badge badge-cached">⚡ From Cache</span>}
+          </div>
+
+          {loading && (
+            <div className="card-grid">
+              {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+            </div>
+          )}
+          {error && <div className="error-box">⚠ {error}</div>}
+          {!loading && data && (
+            <div className="card-grid">
+              {data.slice(0, 6).map(u => <UserCard key={u.id} user={u} />)}
+            </div>
+          )}
+
+          <div className="debug">
+            <div>URL: <span>{selectedUrl}</span></div>
+            <div>From cache: <span>{String(fromCache)}</span></div>
+            <div>Cache size: <span>{cache.size} entries</span></div>
+            <div>Fetch renders: <span>{fetchCount}</span></div>
+          </div>
+        </>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>12 — useFetch Hook</h1>
+          <p className="desc">Features: Loading/error/data states, AbortController (cancel on unmount), in-memory cache, skeleton loading, force refresh.</p>
+          <Demo />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

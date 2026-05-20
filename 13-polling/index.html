@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>13 - Polling Mechanism</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .controls { display: flex; gap: 10px; margin-bottom: 20px; align-items: center; }
+    button { padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .btn-start { background: #059669; color: #fff; }
+    .btn-stop { background: #dc2626; color: #fff; }
+    select { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+    .status-bar { display: flex; gap: 16px; margin-bottom: 20px; font-size: 13px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .dot.active { background: #059669; animation: pulse 1s ease-in-out infinite; }
+    .dot.paused { background: #f59e0b; }
+    .dot.stopped { background: #dc2626; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .feed { width: 540px; display: flex; flex-direction: column; gap: 10px; }
+    .event-card { background: #fff; border-radius: 8px; padding: 14px 16px; border-left: 4px solid #4f46e5; display: flex; gap: 12px; align-items: flex-start; animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+    .event-time { font-size: 11px; color: #888; white-space: nowrap; margin-top: 2px; }
+    .event-type { font-weight: 600; font-size: 13px; }
+    .event-msg { font-size: 13px; color: #555; margin-top: 2px; }
+    .event-card.warn { border-color: #f59e0b; }
+    .event-card.error { border-color: #dc2626; }
+    .event-card.success { border-color: #059669; }
+    .counter { font-size: 13px; color: #4f46e5; font-weight: 600; }
+    .tab-warning { background: #fef3c7; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 16px; font-size: 13px; color: #92400e; margin-bottom: 16px; display: none; }
+    .tab-warning.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const EVENT_TYPES = [
+      { type: 'info', messages: ['New user signed up', 'Report generated', 'Backup completed', 'Config updated'] },
+      { type: 'warn', messages: ['High memory usage', 'Slow query detected', 'Rate limit approaching', 'Cache miss rate high'] },
+      { type: 'error', messages: ['Payment failed', 'Connection timeout', 'Service unavailable', 'Auth error'] },
+      { type: 'success', messages: ['Deploy succeeded', 'Tests passed', 'Task completed', 'Sync finished'] },
+    ];
+
+    function generateEvent() {
+      const group = EVENT_TYPES[Math.floor(Math.random() * EVENT_TYPES.length)];
+      const msg = group.messages[Math.floor(Math.random() * group.messages.length)];
+      return { id: Date.now() + Math.random(), type: group.type, msg, time: new Date().toLocaleTimeString() };
+    }
+
+    function usePolling(callback, interval, enabled) {
+      const savedCallback = useRef(callback);
+      useEffect(() => { savedCallback.current = callback; }, [callback]);
+
+      useEffect(() => {
+        if (!enabled) return;
+        const id = setInterval(() => savedCallback.current(), interval);
+        return () => clearInterval(id);
+      }, [interval, enabled]);
+    }
+
+    function usePageVisibility() {
+      const [isVisible, setIsVisible] = useState(!document.hidden);
+      useEffect(() => {
+        const handle = () => setIsVisible(!document.hidden);
+        document.addEventListener('visibilitychange', handle);
+        return () => document.removeEventListener('visibilitychange', handle);
+      }, []);
+      return isVisible;
+    }
+
+    function App() {
+      const [events, setEvents] = useState([]);
+      const [running, setRunning] = useState(true);
+      const [interval, setIntervalMs] = useState(2000);
+      const [pollCount, setPollCount] = useState(0);
+      const isVisible = usePageVisibility();
+
+      const isPolling = running && isVisible;
+
+      const poll = useCallback(() => {
+        setEvents(prev => [generateEvent(), ...prev].slice(0, 20));
+        setPollCount(c => c + 1);
+      }, []);
+
+      usePolling(poll, interval, isPolling);
+
+      return (
+        <div>
+          <h1>13 — Polling Mechanism</h1>
+          <p className="desc">Features: setInterval polling, pauses on tab blur (visibilitychange), resumes on focus, configurable interval, max buffer.</p>
+
+          <div className={`tab-warning ${!isVisible ? 'visible' : ''}`}>
+            ⏸ Tab is not visible — polling paused. Switch back to this tab to resume.
+          </div>
+
+          <div className="controls">
+            <button className={running ? 'btn-stop' : 'btn-start'} onClick={() => setRunning(r => !r)}>
+              {running ? '⏹ Stop' : '▶ Start'}
+            </button>
+            <select value={interval} onChange={e => setIntervalMs(Number(e.target.value))}>
+              <option value={1000}>Every 1s</option>
+              <option value={2000}>Every 2s</option>
+              <option value={5000}>Every 5s</option>
+            </select>
+            <button style={{ background: '#e5e7eb', color: '#333' }} onClick={() => { setEvents([]); setPollCount(0); }}>Clear</button>
+          </div>
+
+          <div className="status-bar">
+            <span>
+              <span className={`dot ${isPolling ? 'active' : running ? 'paused' : 'stopped'}`} />
+              {isPolling ? 'Polling active' : running ? 'Paused (tab hidden)' : 'Stopped'}
+            </span>
+            <span className="counter">Total polls: {pollCount}</span>
+            <span style={{ color: '#888' }}>Events buffered: {events.length}/20</span>
+          </div>
+
+          <div className="feed">
+            {events.length === 0 && <p style={{ color: '#aaa', fontSize: 14 }}>No events yet. Start polling to see events.</p>}
+            {events.slice(0, 10).map(ev => (
+              <div key={ev.id} className={`event-card ${ev.type}`}>
+                <div className="event-time">{ev.time}</div>
+                <div>
+                  <div className="event-type">{ev.type.toUpperCase()}</div>
+                  <div className="event-msg">{ev.msg}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

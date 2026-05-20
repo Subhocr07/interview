@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>02 - Accordion</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .controls { display: flex; gap: 12px; margin-bottom: 20px; }
+    label { font-size: 14px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .accordion { width: 540px; border-radius: 8px; overflow: hidden; border: 1px solid #e0e0e0; }
+    .accordion-item { border-bottom: 1px solid #e0e0e0; }
+    .accordion-item:last-child { border-bottom: none; }
+    .accordion-header { width: 100%; background: #fff; border: none; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-size: 15px; font-weight: 500; text-align: left; }
+    .accordion-header:hover { background: #f9f9f9; }
+    .accordion-header.active { background: #eef2ff; color: #4f46e5; }
+    .chevron { transition: transform 0.25s; font-size: 12px; }
+    .chevron.open { transform: rotate(180deg); }
+    .accordion-body { background: #fff; overflow: hidden; max-height: 0; transition: max-height 0.3s ease, padding 0.3s ease; padding: 0 20px; }
+    .accordion-body.open { max-height: 300px; padding: 12px 20px 20px; }
+    .accordion-body p { color: #555; line-height: 1.6; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState } = React;
+
+    const items = [
+      { id: 1, title: 'What is React?', body: 'React is a JavaScript library for building user interfaces. It lets you compose complex UIs from small and isolated pieces of code called "components".' },
+      { id: 2, title: 'What is a custom hook?', body: 'A custom hook is a JavaScript function whose name starts with "use" and that may call other hooks. Custom hooks let you reuse stateful logic across components.' },
+      { id: 3, title: 'What is the Virtual DOM?', body: 'The virtual DOM (VDOM) is a programming concept where an ideal, or "virtual", representation of a UI is kept in memory and synced with the real DOM by a library like ReactDOM.' },
+      { id: 4, title: 'When do you use useEffect?', body: 'useEffect lets you perform side effects in function components — such as data fetching, subscriptions, or manually changing the DOM. It runs after every completed render by default.' },
+    ];
+
+    // Controlled Accordion
+    function Accordion({ items, multiple = false, defaultOpen = [] }) {
+      const [openIds, setOpenIds] = useState(new Set(defaultOpen));
+
+      function toggle(id) {
+        setOpenIds(prev => {
+          const next = new Set(prev);
+          if (next.has(id)) {
+            next.delete(id);
+          } else {
+            if (!multiple) next.clear();
+            next.add(id);
+          }
+          return next;
+        });
+      }
+
+      return (
+        <div className="accordion" role="list">
+          {items.map(item => {
+            const isOpen = openIds.has(item.id);
+            return (
+              <div className="accordion-item" role="listitem" key={item.id}>
+                <button
+                  className={`accordion-header ${isOpen ? 'active' : ''}`}
+                  onClick={() => toggle(item.id)}
+                  aria-expanded={isOpen}
+                  aria-controls={`body-${item.id}`}
+                  id={`header-${item.id}`}
+                >
+                  {item.title}
+                  <span className={`chevron ${isOpen ? 'open' : ''}`}>▼</span>
+                </button>
+                <div
+                  className={`accordion-body ${isOpen ? 'open' : ''}`}
+                  id={`body-${item.id}`}
+                  role="region"
+                  aria-labelledby={`header-${item.id}`}
+                >
+                  <p>{item.body}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function App() {
+      const [multiple, setMultiple] = useState(false);
+
+      return (
+        <div>
+          <h1>02 — Accordion</h1>
+          <p className="desc">Features: single/multiple open mode, smooth animation, ARIA accessible, controlled state.</p>
+          <div className="controls">
+            <label>
+              <input type="checkbox" checked={multiple} onChange={e => setMultiple(e.target.checked)} />
+              Allow multiple open panels
+            </label>
+          </div>
+          <Accordion items={items} multiple={multiple} defaultOpen={[1]} />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

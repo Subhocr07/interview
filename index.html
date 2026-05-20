@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>React Interview — 30 Machine Coding Projects</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { font-size: 26px; margin-bottom: 6px; }
+    .subtitle { color: #666; margin-bottom: 32px; font-size: 15px; }
+    .section { margin-bottom: 32px; }
+    .section-title { font-size: 13px; color: #888; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid #e0e0e0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+    .card { background: #fff; border-radius: 10px; padding: 16px; border: 1px solid #e0e0e0; text-decoration: none; color: inherit; transition: box-shadow 0.15s, border-color 0.15s; display: block; }
+    .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); border-color: #4f46e5; }
+    .card-num { font-size: 11px; color: #aaa; font-weight: 700; margin-bottom: 4px; }
+    .card-title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+    .card-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tag { font-size: 11px; padding: 2px 7px; border-radius: 20px; font-weight: 500; }
+    .t-hook { background: #d1fae5; color: #065f46; }
+    .t-component { background: #dbeafe; color: #1e40af; }
+    .t-state { background: #ede9fe; color: #5b21b6; }
+    .t-perf { background: #fef3c7; color: #92400e; }
+    .t-pattern { background: #fce7f3; color: #9d174d; }
+    .t-data { background: #e0f2fe; color: #075985; }
+    .t-advanced { background: #fee2e2; color: #991b1b; }
+  </style>
+</head>
+<body>
+  <h1>React Interview — Machine Coding Projects</h1>
+  <p class="subtitle">4 Years Experience · 30 Projects · Open any file directly in browser (React via CDN, no setup needed)</p>
+
+  <div class="section">
+    <div class="section-title">Component Design (1–5)</div>
+    <div class="grid">
+      <a class="card" href="01-modal/index.html"><div class="card-num">01</div><div class="card-title">Modal with Portal</div><div class="card-tags"><span class="tag t-component">Portal</span><span class="tag t-component">ARIA</span><span class="tag t-component">Focus trap</span></div></a>
+      <a class="card" href="02-accordion/index.html"><div class="card-num">02</div><div class="card-title">Accordion</div><div class="card-tags"><span class="tag t-component">Single/multi</span><span class="tag t-state">State</span><span class="tag t-component">ARIA</span></div></a>
+      <a class="card" href="03-tabs/index.html"><div class="card-num">03</div><div class="card-title">Tabs</div><div class="card-tags"><span class="tag t-component">Keyboard nav</span><span class="tag t-component">Lazy render</span><span class="tag t-component">ARIA</span></div></a>
+      <a class="card" href="04-virtualized-list/index.html"><div class="card-num">04</div><div class="card-title">Virtualized List</div><div class="card-tags"><span class="tag t-perf">10k items</span><span class="tag t-perf">DOM windowing</span></div></a>
+      <a class="card" href="05-infinite-scroll/index.html"><div class="card-num">05</div><div class="card-title">Infinite Scroll</div><div class="card-tags"><span class="tag t-component">IntersectionObserver</span><span class="tag t-data">Pagination</span></div></a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Forms & Validation (6–8)</div>
+    <div class="grid">
+      <a class="card" href="06-multi-step-form/index.html"><div class="card-num">06</div><div class="card-title">Multi-Step Form Wizard</div><div class="card-tags"><span class="tag t-component">Stepper</span><span class="tag t-state">Validation</span><span class="tag t-state">Per-step</span></div></a>
+      <a class="card" href="07-debounced-search/index.html"><div class="card-num">07</div><div class="card-title">Debounced Search</div><div class="card-tags"><span class="tag t-hook">useDebounce</span><span class="tag t-component">Dropdown</span><span class="tag t-component">Keyboard nav</span></div></a>
+      <a class="card" href="08-dynamic-form-builder/index.html"><div class="card-num">08</div><div class="card-title">Dynamic Form Builder</div><div class="card-tags"><span class="tag t-component">JSON config</span><span class="tag t-state">7 field types</span></div></a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">State Management (9–11)</div>
+    <div class="grid">
+      <a class="card" href="09-shopping-cart/index.html"><div class="card-num">09</div><div class="card-title">Shopping Cart</div><div class="card-tags"><span class="tag t-state">useReducer</span><span class="tag t-state">Context API</span><span class="tag t-state">Dispatch</span></div></a>
+      <a class="card" href="10-undo-redo/index.html"><div class="card-num">10</div><div class="card-title">Undo / Redo</div><div class="card-tags"><span class="tag t-state">History stack</span><span class="tag t-state">Ctrl+Z / Ctrl+Y</span></div></a>
+      <a class="card" href="11-use-local-storage/index.html"><div class="card-num">11</div><div class="card-title">useLocalStorage Hook</div><div class="card-tags"><span class="tag t-hook">Custom hook</span><span class="tag t-state">Persistence</span><span class="tag t-hook">Cross-tab sync</span></div></a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Data Fetching & Async (12–14)</div>
+    <div class="grid">
+      <a class="card" href="12-use-fetch/index.html"><div class="card-num">12</div><div class="card-title">useFetch Hook</div><div class="card-tags"><span class="tag t-hook">AbortController</span><span class="tag t-data">Cache</span><span class="tag t-data">Skeleton</span></div></a>
+      <a class="card" href="13-polling/index.html"><div class="card-num">13</div><div class="card-title">Polling Mechanism</div><div class="card-tags"><span class="tag t-data">setInterval</span><span class="tag t-data">Tab visibility</span><span class="tag t-data">Pause/resume</span></div></a>
+      <a class="card" href="14-retry-fetch/index.html"><div class="card-num">14</div><div class="card-title">Retry-on-Failure Fetch</div><div class="card-tags"><span class="tag t-data">Exponential backoff</span><span class="tag t-data">Configurable</span></div></a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Performance (15–17)</div>
+    <div class="grid">
+      <a class="card" href="15-performance-optimization/index.html"><div class="card-num">15</div><div class="card-title">Performance Optimization</div><div class="card-tags"><span class="tag t-perf">React.memo</span><span class="tag t-perf">useMemo</span><span class="tag t-perf">useCallback</span></div></a>
+      <a class="card" href="16-lazy-loading/index.html"><div class="card-num">16</div><div class="card-title">Lazy Loading Routes</div><div class="card-tags"><span class="tag t-perf">React.lazy</span><span class="tag t-perf">Suspense</span><span class="tag t-perf">Skeleton</span></div></a>
+      <a class="card" href="17-memoized-selector/index.html"><div class="card-num">17</div><div class="card-title">Memoized Selector</div><div class="card-tags"><span class="tag t-perf">useMemo</span><span class="tag t-perf">Derived data</span><span class="tag t-perf">Cache hits</span></div></a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Real-World Features (18–22)</div>
+    <div class="grid">
+      <a class="card" href="18-kanban-board/index.html"><div class="card-num">18</div><div class="card-title">Kanban Board</div><div class="card-tags"><span class="tag t-component">Drag & Drop</span><span class="tag t-state">No library</span></div></a>
+      <a class="card" href="19-star-rating/index.html"><div class="card-num">19</div><div class="card-title">Star Rating</div><div class="card-tags"><span class="tag t-component">Half stars</span><span class="tag t-component">Hover preview</span><span class="tag t-component">Read-only</span></div></a>
+      <a class="card" href="20-file-upload/index.html"><div class="card-num">20</div><div class="card-title">File Upload</div><div class="card-tags"><span class="tag t-component">Drag & Drop</span><span class="tag t-state">Progress bar</span><span class="tag t-state">Validation</span></div></a>
+      <a class="card" href="21-toast-system/index.html"><div class="card-num">21</div><div class="card-title">Toast System</div><div class="card-tags"><span class="tag t-state">Context</span><span class="tag t-component">Portal</span><span class="tag t-component">Auto-dismiss</span></div></a>
+      <a class="card" href="22-paginated-table/index.html"><div class="card-num">22</div><div class="card-title">Paginated Data Table</div><div class="card-tags"><span class="tag t-data">Sort</span><span class="tag t-data">Filter</span><span class="tag t-data">Pagination</span></div></a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Custom Hooks (23–26)</div>
+    <div class="grid">
+      <a class="card" href="23-debounce-throttle-hooks/index.html"><div class="card-num">23</div><div class="card-title">useDebounce & useThrottle</div><div class="card-tags"><span class="tag t-hook">From scratch</span><span class="tag t-hook">Side-by-side demo</span></div></a>
+      <a class="card" href="24-use-event-listener/index.html"><div class="card-num">24</div><div class="card-title">useEventListener</div><div class="card-tags"><span class="tag t-hook">Stable ref pattern</span><span class="tag t-hook">Auto cleanup</span></div></a>
+      <a class="card" href="25-compound-component/index.html"><div class="card-num">25</div><div class="card-title">Compound Component Pattern</div><div class="card-tags"><span class="tag t-pattern">Context sharing</span><span class="tag t-pattern">Select & Tabs</span></div></a>
+      <a class="card" href="26-use-outside-click/index.html"><div class="card-num">26</div><div class="card-title">useOutsideClick</div><div class="card-tags"><span class="tag t-hook">Dropdown</span><span class="tag t-hook">Popover</span><span class="tag t-hook">Modal</span></div></a>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Advanced Patterns (27–30)</div>
+    <div class="grid">
+      <a class="card" href="27-mini-redux/index.html"><div class="card-num">27</div><div class="card-title">Mini Redux</div><div class="card-tags"><span class="tag t-advanced">createStore</span><span class="tag t-advanced">useSelector</span><span class="tag t-advanced">DevTools</span></div></a>
+      <a class="card" href="28-use-query/index.html"><div class="card-num">28</div><div class="card-title">useQuery (Mini React Query)</div><div class="card-tags"><span class="tag t-advanced">Cache</span><span class="tag t-advanced">Deduplication</span><span class="tag t-advanced">Stale-while-revalidate</span></div></a>
+      <a class="card" href="29-render-props-hoc/index.html"><div class="card-num">29</div><div class="card-title">Render Props vs HOC</div><div class="card-tags"><span class="tag t-pattern">3 patterns</span><span class="tag t-pattern">Comparison table</span></div></a>
+      <a class="card" href="30-code-splitting/index.html"><div class="card-num">30</div><div class="card-title">Code Splitting Strategy</div><div class="card-tags"><span class="tag t-perf">Route-based</span><span class="tag t-perf">Bundle tracker</span><span class="tag t-perf">Lazy loading</span></div></a>
+    </div>
+  </div>
+</body>
+</html>

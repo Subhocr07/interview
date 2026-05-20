@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>09 - Shopping Cart</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .layout { display: flex; gap: 24px; align-items: flex-start; }
+    .products { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; width: 480px; }
+    .product-card { background: #fff; border-radius: 10px; padding: 16px; border: 1px solid #e0e0e0; }
+    .product-emoji { font-size: 36px; margin-bottom: 8px; }
+    .product-name { font-weight: 600; margin-bottom: 4px; }
+    .product-price { color: #4f46e5; font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+    .add-btn { width: 100%; padding: 8px; background: #4f46e5; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .add-btn:hover { background: #4338ca; }
+    .add-btn.added { background: #059669; }
+    .cart { width: 320px; background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #e0e0e0; position: sticky; top: 40px; }
+    .cart h2 { font-size: 16px; margin-bottom: 16px; display: flex; justify-content: space-between; }
+    .cart-badge { background: #4f46e5; color: #fff; border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; }
+    .cart-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+    .cart-item:last-of-type { border-bottom: none; }
+    .ci-emoji { font-size: 22px; }
+    .ci-info { flex: 1; }
+    .ci-name { font-size: 13px; font-weight: 500; }
+    .ci-price { font-size: 12px; color: #888; }
+    .qty-controls { display: flex; align-items: center; gap: 6px; }
+    .qty-btn { width: 26px; height: 26px; border: 1px solid #d1d5db; border-radius: 4px; background: none; cursor: pointer; font-size: 14px; font-weight: 700; }
+    .qty-btn:hover { background: #f0f0f0; }
+    .qty { font-size: 14px; min-width: 20px; text-align: center; }
+    .remove-btn { background: none; border: none; color: #dc2626; cursor: pointer; font-size: 14px; padding: 4px; }
+    .cart-total { margin-top: 14px; padding-top: 14px; border-top: 2px solid #e0e0e0; }
+    .total-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; color: #666; }
+    .total-final { display: flex; justify-content: space-between; font-weight: 700; font-size: 16px; margin-top: 8px; }
+    .checkout-btn { width: 100%; margin-top: 14px; padding: 10px; background: #059669; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; }
+    .checkout-btn:hover { background: #047857; }
+    .empty { text-align: center; padding: 24px 0; color: #aaa; font-size: 14px; }
+    .clear-btn { background: none; border: none; color: #dc2626; cursor: pointer; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useReducer, createContext, useContext } = React;
+
+    const PRODUCTS = [
+      { id: 1, name: 'Wireless Headphones', price: 79.99, emoji: '🎧' },
+      { id: 2, name: 'Mechanical Keyboard', price: 129.99, emoji: '⌨️' },
+      { id: 3, name: 'USB-C Hub', price: 49.99, emoji: '🔌' },
+      { id: 4, name: 'Webcam HD', price: 89.99, emoji: '📷' },
+      { id: 5, name: 'Mouse Pad XL', price: 19.99, emoji: '🖱️' },
+      { id: 6, name: 'LED Desk Lamp', price: 34.99, emoji: '💡' },
+    ];
+
+    function cartReducer(state, action) {
+      switch (action.type) {
+        case 'ADD': {
+          const existing = state.find(i => i.id === action.product.id);
+          if (existing) return state.map(i => i.id === action.product.id ? { ...i, qty: i.qty + 1 } : i);
+          return [...state, { ...action.product, qty: 1 }];
+        }
+        case 'REMOVE':
+          return state.filter(i => i.id !== action.id);
+        case 'INCREMENT':
+          return state.map(i => i.id === action.id ? { ...i, qty: i.qty + 1 } : i);
+        case 'DECREMENT':
+          return state.map(i => i.id === action.id ? { ...i, qty: i.qty - 1 } : i).filter(i => i.qty > 0);
+        case 'CLEAR':
+          return [];
+        default:
+          return state;
+      }
+    }
+
+    const CartContext = createContext(null);
+
+    function CartProvider({ children }) {
+      const [cart, dispatch] = useReducer(cartReducer, []);
+      return <CartContext.Provider value={{ cart, dispatch }}>{children}</CartContext.Provider>;
+    }
+
+    function useCart() { return useContext(CartContext); }
+
+    function ProductCard({ product }) {
+      const { cart, dispatch } = useCart();
+      const inCart = cart.some(i => i.id === product.id);
+      return (
+        <div className="product-card">
+          <div className="product-emoji">{product.emoji}</div>
+          <div className="product-name">{product.name}</div>
+          <div className="product-price">${product.price.toFixed(2)}</div>
+          <button className={`add-btn ${inCart ? 'added' : ''}`} onClick={() => dispatch({ type: 'ADD', product })}>
+            {inCart ? '✓ In Cart' : 'Add to Cart'}
+          </button>
+        </div>
+      );
+    }
+
+    function Cart() {
+      const { cart, dispatch } = useCart();
+      const subtotal = cart.reduce((sum, i) => sum + i.price * i.qty, 0);
+      const tax = subtotal * 0.08;
+      const total = subtotal + tax;
+      const itemCount = cart.reduce((sum, i) => sum + i.qty, 0);
+
+      return (
+        <div className="cart">
+          <h2>Cart <span className="cart-badge">{itemCount}</span></h2>
+
+          {cart.length === 0 ? (
+            <div className="empty">🛒 Your cart is empty</div>
+          ) : (
+            <>
+              {cart.map(item => (
+                <div className="cart-item" key={item.id}>
+                  <span className="ci-emoji">{item.emoji}</span>
+                  <div className="ci-info">
+                    <div className="ci-name">{item.name}</div>
+                    <div className="ci-price">${(item.price * item.qty).toFixed(2)}</div>
+                  </div>
+                  <div className="qty-controls">
+                    <button className="qty-btn" onClick={() => dispatch({ type: 'DECREMENT', id: item.id })}>−</button>
+                    <span className="qty">{item.qty}</span>
+                    <button className="qty-btn" onClick={() => dispatch({ type: 'INCREMENT', id: item.id })}>+</button>
+                  </div>
+                  <button className="remove-btn" onClick={() => dispatch({ type: 'REMOVE', id: item.id })} title="Remove">✕</button>
+                </div>
+              ))}
+
+              <div className="cart-total">
+                <div className="total-row"><span>Subtotal</span><span>${subtotal.toFixed(2)}</span></div>
+                <div className="total-row"><span>Tax (8%)</span><span>${tax.toFixed(2)}</span></div>
+                <div className="total-final"><span>Total</span><span>${total.toFixed(2)}</span></div>
+              </div>
+              <button className="checkout-btn">Checkout</button>
+              <div style={{ textAlign: 'center', marginTop: 10 }}>
+                <button className="clear-btn" onClick={() => dispatch({ type: 'CLEAR' })}>Clear cart</button>
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <CartProvider>
+          <h1>09 — Shopping Cart</h1>
+          <p className="desc">Features: useReducer for cart state, Context API for global access, add/remove/increment/decrement/clear, tax calculation.</p>
+          <div className="layout">
+            <div className="products">
+              {PRODUCTS.map(p => <ProductCard key={p.id} product={p} />)}
+            </div>
+            <Cart />
+          </div>
+        </CartProvider>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

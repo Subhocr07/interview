@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>20 - File Upload</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .upload-area { width: 560px; border: 2px dashed #c7d2fe; border-radius: 12px; padding: 40px; text-align: center; cursor: pointer; background: #fff; transition: border-color 0.2s, background 0.2s; }
+    .upload-area:hover, .upload-area.drag-over { border-color: #4f46e5; background: #eef2ff; }
+    .upload-icon { font-size: 40px; margin-bottom: 10px; }
+    .upload-text { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .upload-sub { font-size: 13px; color: #888; }
+    .upload-sub span { color: #4f46e5; font-weight: 500; }
+    input[type=file] { display: none; }
+    .file-list { margin-top: 20px; width: 560px; display: flex; flex-direction: column; gap: 10px; }
+    .file-item { background: #fff; border-radius: 8px; padding: 14px; border: 1px solid #e0e0e0; }
+    .file-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .file-icon { font-size: 24px; flex-shrink: 0; }
+    .file-info { flex: 1; min-width: 0; }
+    .file-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .file-size { font-size: 12px; color: #888; }
+    .file-status { font-size: 12px; font-weight: 600; }
+    .status-uploading { color: #4f46e5; }
+    .status-done { color: #059669; }
+    .status-error { color: #dc2626; }
+    .progress-bar-wrap { height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; }
+    .progress-bar { height: 100%; border-radius: 3px; transition: width 0.2s; }
+    .progress-bar.uploading { background: #4f46e5; }
+    .progress-bar.done { background: #059669; }
+    .progress-bar.error { background: #dc2626; }
+    .preview-img { width: 48px; height: 48px; border-radius: 4px; object-fit: cover; }
+    .remove-btn { background: none; border: none; color: #aaa; cursor: pointer; font-size: 16px; padding: 2px; }
+    .remove-btn:hover { color: #dc2626; }
+    .error-msg { font-size: 12px; color: #dc2626; margin-top: 4px; }
+    .constraint-info { font-size: 12px; color: #888; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useCallback } = React;
+
+    const MAX_SIZE = 5 * 1024 * 1024; // 5MB
+    const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'application/pdf', 'text/plain'];
+
+    function getFileIcon(type) {
+      if (type.startsWith('image/')) return '🖼️';
+      if (type === 'application/pdf') return '📄';
+      if (type.startsWith('text/')) return '📝';
+      return '📁';
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function simulateUpload(file, onProgress) {
+      return new Promise((resolve, reject) => {
+        let progress = 0;
+        const shouldFail = Math.random() < 0.15; // 15% failure rate
+        const duration = 1500 + Math.random() * 1500;
+        const interval = setInterval(() => {
+          progress += Math.random() * 15 + 5;
+          if (progress >= 100) {
+            clearInterval(interval);
+            if (shouldFail) { onProgress(85); setTimeout(() => reject(new Error('Upload failed: server error')), 300); }
+            else { onProgress(100); resolve(); }
+          } else {
+            onProgress(Math.min(progress, 95));
+          }
+        }, duration / 15);
+      });
+    }
+
+    function FileItem({ file, onRemove }) {
+      const { name, size, type, preview, status, progress, error } = file;
+
+      return (
+        <div className="file-item">
+          <div className="file-header">
+            {preview ? (
+              <img src={preview} className="preview-img" alt={name} />
+            ) : (
+              <span className="file-icon">{getFileIcon(type)}</span>
+            )}
+            <div className="file-info">
+              <div className="file-name">{name}</div>
+              <div className="file-size">{formatSize(size)}</div>
+              {error && <div className="error-msg">{error}</div>}
+            </div>
+            <span className={`file-status status-${status}`}>
+              {status === 'uploading' && `${Math.round(progress)}%`}
+              {status === 'done' && '✓ Done'}
+              {status === 'error' && '✕ Error'}
+              {status === 'validating' && '⏳'}
+            </span>
+            <button className="remove-btn" onClick={() => onRemove(file.id)}>✕</button>
+          </div>
+          {status !== 'done' && status !== 'error' && (
+            <div className="progress-bar-wrap">
+              <div className={`progress-bar ${status}`} style={{ width: `${progress}%` }} />
+            </div>
+          )}
+          {status === 'done' && (
+            <div className="progress-bar-wrap">
+              <div className="progress-bar done" style={{ width: '100%' }} />
+            </div>
+          )}
+          {status === 'error' && (
+            <div className="progress-bar-wrap">
+              <div className="progress-bar error" style={{ width: `${progress}%` }} />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      const [files, setFiles] = useState([]);
+      const [dragOver, setDragOver] = useState(false);
+      const inputRef = useRef(null);
+
+      const updateFile = useCallback((id, patch) => {
+        setFiles(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f));
+      }, []);
+
+      async function processFile(rawFile) {
+        const id = Date.now() + Math.random();
+
+        // Validate
+        if (!ALLOWED_TYPES.includes(rawFile.type)) {
+          setFiles(prev => [...prev, { id, name: rawFile.name, size: rawFile.size, type: rawFile.type, status: 'error', progress: 0, error: `File type not allowed: ${rawFile.type}` }]);
+          return;
+        }
+        if (rawFile.size > MAX_SIZE) {
+          setFiles(prev => [...prev, { id, name: rawFile.name, size: rawFile.size, type: rawFile.type, status: 'error', progress: 0, error: `File too large (max ${formatSize(MAX_SIZE)})` }]);
+          return;
+        }
+
+        // Preview for images
+        let preview = null;
+        if (rawFile.type.startsWith('image/')) {
+          preview = await new Promise(r => { const fr = new FileReader(); fr.onload = e => r(e.target.result); fr.readAsDataURL(rawFile); });
+        }
+
+        setFiles(prev => [...prev, { id, name: rawFile.name, size: rawFile.size, type: rawFile.type, status: 'uploading', progress: 0, preview }]);
+
+        try {
+          await simulateUpload(rawFile, p => updateFile(id, { progress: p }));
+          updateFile(id, { status: 'done', progress: 100 });
+        } catch (err) {
+          updateFile(id, { status: 'error', error: err.message });
+        }
+      }
+
+      function handleFiles(fileList) {
+        Array.from(fileList).forEach(processFile);
+      }
+
+      function onDrop(e) {
+        e.preventDefault();
+        setDragOver(false);
+        handleFiles(e.dataTransfer.files);
+      }
+
+      return (
+        <div>
+          <h1>20 — File Upload</h1>
+          <p className="desc">Features: Drag-and-drop, file type/size validation, image previews, simulated upload progress, error handling (15% fail rate).</p>
+
+          <div
+            className={`upload-area ${dragOver ? 'drag-over' : ''}`}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            onClick={() => inputRef.current.click()}
+          >
+            <div className="upload-icon">☁️</div>
+            <div className="upload-text">Drop files here or <span style={{ color: '#4f46e5' }}>browse</span></div>
+            <div className="upload-sub">Supports: JPG, PNG, GIF, WEBP, PDF, TXT — Max <span>5MB</span> each</div>
+            <input ref={inputRef} type="file" multiple accept={ALLOWED_TYPES.join(',')} onChange={e => handleFiles(e.target.files)} />
+          </div>
+
+          {files.length > 0 && (
+            <div className="file-list">
+              {files.map(f => (
+                <FileItem key={f.id} file={f} onRemove={id => setFiles(prev => prev.filter(f => f.id !== id))} />
+              ))}
+            </div>
+          )}
+
+          <p className="constraint-info" style={{ marginTop: 16 }}>
+            {files.filter(f => f.status === 'done').length} uploaded · {files.filter(f => f.status === 'uploading').length} uploading · {files.filter(f => f.status === 'error').length} failed
+          </p>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>05 - Infinite Scroll</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .list { width: 500px; }
+    .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin-bottom: 10px; display: flex; gap: 14px; align-items: center; }
+    .avatar { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; font-size: 16px; flex-shrink: 0; }
+    .card-name { font-weight: 600; margin-bottom: 4px; }
+    .card-email { font-size: 13px; color: #888; }
+    .sentinel { height: 40px; display: flex; align-items: center; justify-content: center; color: #888; font-size: 14px; }
+    .spinner { width: 24px; height: 24px; border: 3px solid #e0e0e0; border-top-color: #4f46e5; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 10px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error { color: #dc2626; font-size: 14px; }
+    .end-msg { font-size: 14px; color: #aaa; }
+    .stats { font-size: 13px; color: #4f46e5; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    const PAGE_SIZE = 10;
+    const COLORS = ['#4f46e5','#059669','#dc2626','#d97706','#7c3aed','#0891b2'];
+
+    function fakeApi(page) {
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          if (Math.random() < 0.1) { reject(new Error('Network error')); return; }
+          const start = (page - 1) * PAGE_SIZE;
+          const items = Array.from({ length: PAGE_SIZE }, (_, i) => ({
+            id: start + i + 1,
+            name: `User ${start + i + 1}`,
+            email: `user${start + i + 1}@example.com`,
+            color: COLORS[(start + i) % COLORS.length],
+          }));
+          const hasMore = page < 8; // 80 total items
+          resolve({ items, hasMore });
+        }, 800);
+      });
+    }
+
+    function useInfiniteScroll() {
+      const [items, setItems] = useState([]);
+      const [page, setPage] = useState(1);
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [hasMore, setHasMore] = useState(true);
+
+      const loadMore = useCallback(async () => {
+        if (loading || !hasMore) return;
+        setLoading(true);
+        setError(null);
+        try {
+          const data = await fakeApi(page);
+          setItems(prev => [...prev, ...data.items]);
+          setHasMore(data.hasMore);
+          setPage(p => p + 1);
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      }, [loading, hasMore, page]);
+
+      return { items, loading, error, hasMore, loadMore };
+    }
+
+    function InfiniteList() {
+      const { items, loading, error, hasMore, loadMore } = useInfiniteScroll();
+      const sentinelRef = useRef(null);
+
+      // Load initial data
+      useEffect(() => { loadMore(); }, []);
+
+      // Observe sentinel
+      useEffect(() => {
+        const el = sentinelRef.current;
+        if (!el) return;
+        const observer = new IntersectionObserver(
+          ([entry]) => { if (entry.isIntersecting) loadMore(); },
+          { threshold: 0.1 }
+        );
+        observer.observe(el);
+        return () => observer.disconnect();
+      }, [loadMore]);
+
+      return (
+        <div className="list">
+          <p className="stats">Loaded {items.length} items</p>
+          {items.map(item => (
+            <div className="card" key={item.id}>
+              <div className="avatar" style={{ background: item.color }}>
+                {item.name[0]}{item.name.split(' ')[1]?.[0]}
+              </div>
+              <div>
+                <div className="card-name">{item.name}</div>
+                <div className="card-email">{item.email}</div>
+              </div>
+            </div>
+          ))}
+
+          <div className="sentinel" ref={sentinelRef}>
+            {loading && <><div className="spinner" /> Loading more...</>}
+            {error && <span className="error">⚠ {error} — <button onClick={loadMore}>Retry</button></span>}
+            {!hasMore && !loading && <span className="end-msg">You've reached the end!</span>}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>05 — Infinite Scroll</h1>
+          <p className="desc">Features: IntersectionObserver sentinel, loading state, error with retry, end-of-list detection, fake paginated API.</p>
+          <InfiniteList />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

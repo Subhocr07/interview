@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>17 - Memoized Selector</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .controls { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+    select, input { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+    button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; background: #4f46e5; color: #fff; }
+    button:hover { background: #4338ca; }
+    .layout { display: flex; gap: 20px; }
+    .panel { background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #e0e0e0; }
+    .panel h3 { font-size: 13px; color: #888; text-transform: uppercase; margin-bottom: 14px; }
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 280px; }
+    .stat-box { background: #f5f5f5; border-radius: 8px; padding: 12px; }
+    .stat-val { font-size: 22px; font-weight: 700; color: #4f46e5; }
+    .stat-label { font-size: 12px; color: #888; margin-top: 2px; }
+    .product-list { width: 340px; max-height: 340px; overflow-y: auto; }
+    .product-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+    .product-row:last-child { border-bottom: none; }
+    .prod-name { font-weight: 500; }
+    .prod-cat { color: #888; font-size: 11px; }
+    .prod-price { font-weight: 700; color: #4f46e5; }
+    .prod-stock { font-size: 11px; padding: 2px 6px; border-radius: 20px; }
+    .in-stock { background: #d1fae5; color: #065f46; }
+    .out-stock { background: #fee2e2; color: #991b1b; }
+    .debug { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 14px; font-size: 12px; font-family: monospace; margin-top: 20px; }
+    .debug .hit { color: #a6e3a1; }
+    .debug .miss { color: #f38ba8; }
+    .unrelated { font-size: 13px; color: #888; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-left: 8px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useMemo, useRef } = React;
+
+    const CATEGORIES = ['Electronics', 'Clothing', 'Food', 'Books'];
+    const products = Array.from({ length: 80 }, (_, i) => ({
+      id: i + 1,
+      name: `Product ${i + 1}`,
+      category: CATEGORIES[i % 4],
+      price: Math.round(Math.random() * 200 + 5),
+      inStock: Math.random() > 0.3,
+      rating: +(Math.random() * 2 + 3).toFixed(1),
+    }));
+
+    function App() {
+      const [category, setCategory] = useState('All');
+      const [minPrice, setMinPrice] = useState(0);
+      const [sortBy, setSortBy] = useState('price');
+      const [unrelated, setUnrelated] = useState(0);
+      const computeCount = useRef(0);
+      const cacheHits = useRef(0);
+      const prevDepsRef = useRef(null);
+
+      // useMemo: only recompute when filter/sort deps change
+      const derived = useMemo(() => {
+        const deps = `${category}|${minPrice}|${sortBy}`;
+        if (prevDepsRef.current === deps) { cacheHits.current++; }
+        else { computeCount.current++; prevDepsRef.current = deps; }
+
+        const filtered = products
+          .filter(p => category === 'All' || p.category === category)
+          .filter(p => p.price >= minPrice);
+        const sorted = [...filtered].sort((a, b) => {
+          if (sortBy === 'price') return a.price - b.price;
+          if (sortBy === 'rating') return b.rating - a.rating;
+          return a.name.localeCompare(b.name);
+        });
+        const total = filtered.reduce((s, p) => s + p.price, 0);
+        const avg = total / (filtered.length || 1);
+        const inStock = filtered.filter(p => p.inStock).length;
+        return { items: sorted, total, avg: avg.toFixed(2), inStock, count: filtered.length };
+      }, [category, minPrice, sortBy]);
+
+      return (
+        <div>
+          <h1>17 — Memoized Selector</h1>
+          <p className="desc">Features: useMemo for derived data (filter + sort + aggregate), skips recompute on unrelated state changes, cache hit tracking.</p>
+
+          <div className="controls">
+            <select value={category} onChange={e => setCategory(e.target.value)}>
+              <option>All</option>
+              {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+            </select>
+            <label style={{ fontSize: 13 }}>
+              Min price: $<input type="number" value={minPrice} onChange={e => setMinPrice(+e.target.value)} style={{ width: 80, marginLeft: 6 }} min={0} />
+            </label>
+            <select value={sortBy} onChange={e => setSortBy(e.target.value)}>
+              <option value="price">Sort: Price ↑</option>
+              <option value="rating">Sort: Rating ↓</option>
+              <option value="name">Sort: Name A-Z</option>
+            </select>
+            <button style={{ background: '#e5e7eb', color: '#333' }} onClick={() => setUnrelated(n => n + 1)}>
+              Unrelated state: {unrelated}
+            </button>
+          </div>
+          <p style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>
+            "Unrelated state" button triggers a re-render — useMemo should skip recomputation (cache hit).
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h3>Derived Stats</h3>
+              <div className="stats-grid">
+                <div className="stat-box"><div className="stat-val">{derived.count}</div><div className="stat-label">Matching</div></div>
+                <div className="stat-box"><div className="stat-val">{derived.inStock}</div><div className="stat-label">In Stock</div></div>
+                <div className="stat-box"><div className="stat-val">${derived.avg}</div><div className="stat-label">Avg Price</div></div>
+                <div className="stat-box"><div className="stat-val">${derived.total}</div><div className="stat-label">Total Value</div></div>
+              </div>
+            </div>
+
+            <div className="panel product-list">
+              <h3>Products ({derived.count})</h3>
+              {derived.items.slice(0, 15).map(p => (
+                <div className="product-row" key={p.id}>
+                  <div>
+                    <div className="prod-name">{p.name}</div>
+                    <div className="prod-cat">{p.category} · ⭐{p.rating}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div className="prod-price">${p.price}</div>
+                    <span className={`prod-stock ${p.inStock ? 'in-stock' : 'out-stock'}`}>
+                      {p.inStock ? 'In Stock' : 'Out'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {derived.count > 15 && <p style={{ fontSize: 12, color: '#aaa', marginTop: 8 }}>+{derived.count - 15} more...</p>}
+            </div>
+          </div>
+
+          <div className="debug">
+            <div>useMemo recomputations: <span className="miss">{computeCount.current}</span> (actual expensive work done)</div>
+            <div>Cache hits (skipped): <span className="hit">{unrelated}</span> (unrelated re-renders avoided)</div>
+            <div>Deps that trigger recompute: <span style={{ color: '#89b4fa' }}>category, minPrice, sortBy</span></div>
+            <div>Total products in dataset: <span style={{ color: '#f9e2af' }}>{products.length}</span></div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

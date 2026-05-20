@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>08 - Dynamic Form Builder</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .layout { display: flex; gap: 32px; align-items: flex-start; }
+    .panel { background: #fff; border-radius: 10px; padding: 24px; border: 1px solid #e0e0e0; }
+    .panel h3 { font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 16px; }
+    .config { width: 260px; font-size: 13px; font-family: monospace; white-space: pre; color: #1e1e2e; line-height: 1.6; }
+    .form-panel { width: 360px; }
+    .form-group { margin-bottom: 18px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; color: #374151; }
+    .required-star { color: #dc2626; margin-left: 2px; }
+    input[type=text], input[type=email], input[type=number], select, textarea { width: 100%; padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; font-family: inherit; }
+    input:focus, select:focus, textarea:focus { outline: 2px solid #4f46e5; border-color: transparent; }
+    .checkbox-group { display: flex; flex-direction: column; gap: 8px; }
+    .checkbox-item { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+    .checkbox-item input { width: auto; }
+    .radio-group { display: flex; flex-direction: column; gap: 8px; }
+    .radio-item { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+    .radio-item input { width: auto; }
+    .error-msg { color: #dc2626; font-size: 12px; margin-top: 4px; }
+    .hint { color: #888; font-size: 12px; margin-top: 3px; }
+    .submit-btn { background: #4f46e5; color: #fff; padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; width: 100%; }
+    .submit-btn:hover { background: #4338ca; }
+    pre { background: #1e1e2e; color: #cdd6f4; padding: 16px; border-radius: 8px; font-size: 12px; margin-top: 16px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState } = React;
+
+    // JSON config drives the entire form
+    const formConfig = [
+      { id: 'name', type: 'text', label: 'Full Name', placeholder: 'John Doe', required: true, hint: 'As it appears on your ID' },
+      { id: 'email', type: 'email', label: 'Email Address', placeholder: 'john@example.com', required: true },
+      { id: 'age', type: 'number', label: 'Age', placeholder: '25', min: 18, max: 100 },
+      { id: 'role', type: 'select', label: 'Role', required: true, options: ['Developer', 'Designer', 'Manager', 'QA'] },
+      { id: 'skills', type: 'checkbox', label: 'Skills', options: ['React', 'Vue', 'Angular', 'TypeScript', 'Node.js'] },
+      { id: 'experience', type: 'radio', label: 'Experience', required: true, options: ['0-1 years', '2-4 years', '5-8 years', '8+ years'] },
+      { id: 'bio', type: 'textarea', label: 'Bio', placeholder: 'Tell us about yourself...', rows: 3 },
+    ];
+
+    function DynamicField({ config, value, onChange, error }) {
+      const { id, type, label, placeholder, required, hint, options, min, max, rows } = config;
+
+      function renderInput() {
+        switch (type) {
+          case 'text':
+          case 'email':
+          case 'number':
+            return <input type={type} value={value || ''} onChange={e => onChange(id, e.target.value)} placeholder={placeholder} min={min} max={max} />;
+          case 'select':
+            return (
+              <select value={value || ''} onChange={e => onChange(id, e.target.value)}>
+                <option value="">Select...</option>
+                {options.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            );
+          case 'checkbox':
+            return (
+              <div className="checkbox-group">
+                {options.map(o => (
+                  <label key={o} className="checkbox-item">
+                    <input type="checkbox" checked={(value || []).includes(o)} onChange={e => {
+                      const current = value || [];
+                      onChange(id, e.target.checked ? [...current, o] : current.filter(v => v !== o));
+                    }} />
+                    {o}
+                  </label>
+                ))}
+              </div>
+            );
+          case 'radio':
+            return (
+              <div className="radio-group">
+                {options.map(o => (
+                  <label key={o} className="radio-item">
+                    <input type="radio" name={id} value={o} checked={value === o} onChange={() => onChange(id, o)} />
+                    {o}
+                  </label>
+                ))}
+              </div>
+            );
+          case 'textarea':
+            return <textarea value={value || ''} onChange={e => onChange(id, e.target.value)} placeholder={placeholder} rows={rows || 3} />;
+          default:
+            return null;
+        }
+      }
+
+      return (
+        <div className="form-group">
+          <label>{label}{required && <span className="required-star">*</span>}</label>
+          {renderInput()}
+          {hint && <p className="hint">{hint}</p>}
+          {error && <p className="error-msg">{error}</p>}
+        </div>
+      );
+    }
+
+    function DynamicForm({ config }) {
+      const [values, setValues] = useState({});
+      const [errors, setErrors] = useState({});
+      const [submitted, setSubmitted] = useState(null);
+
+      function handleChange(id, value) {
+        setValues(v => ({ ...v, [id]: value }));
+        setErrors(e => ({ ...e, [id]: undefined }));
+      }
+
+      function validate() {
+        const errs = {};
+        config.forEach(field => {
+          if (field.required) {
+            const val = values[field.id];
+            if (!val || (Array.isArray(val) && val.length === 0)) errs[field.id] = `${field.label} is required`;
+          }
+        });
+        return errs;
+      }
+
+      function handleSubmit(e) {
+        e.preventDefault();
+        const errs = validate();
+        if (Object.keys(errs).length) { setErrors(errs); return; }
+        setSubmitted(values);
+      }
+
+      return (
+        <>
+          <form className="panel form-panel" onSubmit={handleSubmit} noValidate>
+            <h3>Generated Form</h3>
+            {config.map(field => (
+              <DynamicField key={field.id} config={field} value={values[field.id]} onChange={handleChange} error={errors[field.id]} />
+            ))}
+            <button type="submit" className="submit-btn">Submit</button>
+          </form>
+          {submitted && (
+            <div style={{ marginTop: 20, width: 360 }}>
+              <pre>{JSON.stringify(submitted, null, 2)}</pre>
+            </div>
+          )}
+        </>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>08 — Dynamic Form Builder</h1>
+          <p className="desc">Features: JSON config drives field types (text, email, number, select, checkbox, radio, textarea), required validation, hints.</p>
+          <div className="layout">
+            <div className="panel">
+              <h3>Config (JSON)</h3>
+              <div className="config">{JSON.stringify(formConfig.map(f => ({ id: f.id, type: f.type, label: f.label, required: f.required })), null, 2)}</div>
+            </div>
+            <DynamicForm config={formConfig} />
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

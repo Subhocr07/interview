@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>11 - useLocalStorage Hook</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .demo { display: flex; flex-direction: column; gap: 20px; width: 540px; }
+    .card { background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #e0e0e0; }
+    .card h3 { font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 14px; }
+    input[type=text], input[type=number] { padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; width: 100%; margin-bottom: 10px; }
+    input:focus { outline: 2px solid #4f46e5; border-color: transparent; }
+    .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .btn-primary { background: #4f46e5; color: #fff; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-danger { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
+    .btn-danger:hover { background: #fee2e2; }
+    .storage-view { background: #1e1e2e; color: #cdd6f4; padding: 14px; border-radius: 8px; font-size: 12px; font-family: monospace; margin-top: 12px; }
+    .storage-key { color: #89b4fa; }
+    .storage-val { color: #a6e3a1; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-left: 8px; }
+    .badge-synced { background: #d1fae5; color: #065f46; }
+    .badge-stored { background: #dbeafe; color: #1e40af; }
+    .hint { font-size: 12px; color: #888; margin-top: 8px; }
+    .todo-list { list-style: none; margin: 10px 0; }
+    .todo-list li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #f5f5f5; font-size: 14px; }
+    .todo-list li:last-child { border-bottom: none; }
+    .todo-list input[type=checkbox] { width: auto; margin: 0; }
+    .todo-list span.done { text-decoration: line-through; color: #aaa; }
+    .add-row { display: flex; gap: 8px; margin-top: 8px; }
+    .add-row input { margin: 0; flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // The custom hook
+    function useLocalStorage(key, initialValue) {
+      const [value, setValue] = useState(() => {
+        try {
+          const stored = localStorage.getItem(key);
+          return stored !== null ? JSON.parse(stored) : initialValue;
+        } catch {
+          return initialValue;
+        }
+      });
+
+      useEffect(() => {
+        try {
+          localStorage.setItem(key, JSON.stringify(value));
+        } catch {}
+      }, [key, value]);
+
+      // Cross-tab sync via storage event
+      useEffect(() => {
+        function handleStorage(e) {
+          if (e.key !== key) return;
+          try {
+            setValue(e.newValue !== null ? JSON.parse(e.newValue) : initialValue);
+          } catch {}
+        }
+        window.addEventListener('storage', handleStorage);
+        return () => window.removeEventListener('storage', handleStorage);
+      }, [key, initialValue]);
+
+      return [value, setValue];
+    }
+
+    function NameDemo() {
+      const [name, setName] = useLocalStorage('demo_name', '');
+      return (
+        <div className="card">
+          <h3>String Value <span className="badge badge-stored">stored</span></h3>
+          <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Type your name — it persists on refresh!" />
+          {name && <p style={{ fontSize: 14, color: '#4f46e5' }}>Hello, <strong>{name}</strong>!</p>}
+          <p className="hint">Refresh the page — your name will still be here.</p>
+        </div>
+      );
+    }
+
+    function CounterDemo() {
+      const [count, setCount] = useLocalStorage('demo_counter', 0);
+      return (
+        <div className="card">
+          <h3>Number Value <span className="badge badge-stored">stored</span></h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 10 }}>
+            <button className="btn btn-primary" onClick={() => setCount(c => c - 1)}>−</button>
+            <span style={{ fontSize: 24, fontWeight: 700, minWidth: 40, textAlign: 'center' }}>{count}</span>
+            <button className="btn btn-primary" onClick={() => setCount(c => c + 1)}>+</button>
+            <button className="btn btn-danger" onClick={() => setCount(0)}>Reset</button>
+          </div>
+          <p className="hint">Count persists across page refreshes.</p>
+        </div>
+      );
+    }
+
+    function TodoDemo() {
+      const [todos, setTodos] = useLocalStorage('demo_todos', [
+        { id: 1, text: 'Buy groceries', done: false },
+        { id: 2, text: 'Read React docs', done: true },
+      ]);
+      const [input, setInput] = useState('');
+
+      function add() {
+        if (!input.trim()) return;
+        setTodos(t => [...t, { id: Date.now(), text: input.trim(), done: false }]);
+        setInput('');
+      }
+
+      function toggle(id) {
+        setTodos(t => t.map(item => item.id === id ? { ...item, done: !item.done } : item));
+      }
+
+      function remove(id) {
+        setTodos(t => t.filter(item => item.id !== id));
+      }
+
+      return (
+        <div className="card">
+          <h3>Object Array <span className="badge badge-stored">stored</span> <span className="badge badge-synced">cross-tab sync</span></h3>
+          <ul className="todo-list">
+            {todos.map(todo => (
+              <li key={todo.id}>
+                <input type="checkbox" checked={todo.done} onChange={() => toggle(todo.id)} />
+                <span className={todo.done ? 'done' : ''}>{todo.text}</span>
+                <button style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626' }} onClick={() => remove(todo.id)}>✕</button>
+              </li>
+            ))}
+          </ul>
+          <div className="add-row">
+            <input type="text" value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && add()} placeholder="New todo..." />
+            <button className="btn btn-primary" onClick={add}>Add</button>
+          </div>
+          <p className="hint">Open this page in another tab — check/uncheck items and they sync instantly!</p>
+        </div>
+      );
+    }
+
+    function StorageViewer() {
+      const [entries, setEntries] = useState([]);
+      useEffect(() => {
+        function refresh() {
+          const keys = ['demo_name', 'demo_counter', 'demo_todos'];
+          setEntries(keys.map(k => ({ key: k, value: localStorage.getItem(k) })));
+        }
+        refresh();
+        window.addEventListener('storage', refresh);
+        const id = setInterval(refresh, 500);
+        return () => { window.removeEventListener('storage', refresh); clearInterval(id); };
+      }, []);
+
+      return (
+        <div className="card">
+          <h3>localStorage State</h3>
+          <div className="storage-view">
+            {entries.map(e => (
+              <div key={e.key}>
+                <span className="storage-key">"{e.key}"</span>: <span className="storage-val">{e.value ?? 'null'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>11 — useLocalStorage Hook</h1>
+          <p className="desc">Features: Persistent state across refreshes, cross-tab sync via storage event, works with any JSON-serializable value.</p>
+          <div className="demo">
+            <NameDemo />
+            <CounterDemo />
+            <TodoDemo />
+            <StorageViewer />
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

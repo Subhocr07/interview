@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>16 - Lazy Loading Routes</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .nav { display: flex; gap: 8px; margin-bottom: 20px; }
+    .nav-btn { padding: 9px 18px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .nav-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+    .nav-btn:hover:not(.active) { background: #f0f0f0; }
+    .page { width: 580px; background: #fff; border-radius: 10px; padding: 28px; border: 1px solid #e0e0e0; min-height: 200px; }
+    .skeleton-block { height: 180px; border-radius: 8px; background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 14px; }
+    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+    .page h2 { margin-bottom: 12px; }
+    .page p { color: #555; font-size: 14px; line-height: 1.6; }
+    .chart-bar { height: 24px; background: #4f46e5; border-radius: 4px; margin: 6px 0; position: relative; }
+    .chart-bar span { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); color: #fff; font-size: 12px; font-weight: 600; }
+    .chart-label { font-size: 12px; color: #888; margin-bottom: 2px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f5f5f5; padding: 8px 12px; text-align: left; font-weight: 600; }
+    td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+    .bundle-info { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 14px; font-size: 12px; font-family: monospace; margin-top: 20px; max-width: 580px; }
+    .bundle-info .loaded { color: #a6e3a1; }
+    .bundle-info .lazy { color: #cba6f7; }
+    .bundle-info .pending { color: #6c7086; }
+    .load-time { color: #f9e2af; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-left: 8px; vertical-align: middle; }
+    .badge-lazy { background: #ede9fe; color: #5b21b6; }
+    .badge-loaded { background: #d1fae5; color: #065f46; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, Suspense, lazy } = React;
+
+    // Simulated lazy-loaded components (mimicking React.lazy + dynamic import)
+    function simulateLazyLoad(Component, delay) {
+      let loaded = false;
+      let promise = null;
+      return function LazyWrapper(props) {
+        const [ready, setReady] = useState(loaded);
+        useEffect(() => {
+          if (!loaded) {
+            if (!promise) promise = new Promise(r => setTimeout(() => { loaded = true; r(); }, delay));
+            promise.then(() => setReady(true));
+          }
+        }, []);
+        if (!ready) throw promise || new Promise(() => {});
+        return <Component {...props} />;
+      };
+    }
+
+    function HomePage() {
+      return (
+        <div className="page">
+          <h2>🏠 Home <span className="badge badge-loaded">eager loaded</span></h2>
+          <p>This is the Home page. It loads immediately — no lazy loading needed for the initial route.</p>
+          <p style={{ marginTop: 12, color: '#888', fontSize: 13 }}>Navigate to the other tabs to see lazy-loaded routes. Each route simulates a 1–2s network import delay on first visit.</p>
+        </div>
+      );
+    }
+
+    function DashboardPage() {
+      const data = [{ label: 'Revenue', value: 82 }, { label: 'Users', value: 65 }, { label: 'Orders', value: 47 }, { label: 'Churn', value: 12 }];
+      return (
+        <div className="page">
+          <h2>📊 Dashboard <span className="badge badge-lazy">lazy loaded</span></h2>
+          <p style={{ marginBottom: 16, color: '#888', fontSize: 13 }}>This heavy chart component was lazy loaded — it only downloads when you first visit this tab.</p>
+          {data.map(d => (
+            <div key={d.label}>
+              <div className="chart-label">{d.label}</div>
+              <div className="chart-bar" style={{ width: `${d.value}%` }}><span>{d.value}%</span></div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function SettingsPage() {
+      return (
+        <div className="page">
+          <h2>⚙️ Settings <span className="badge badge-lazy">lazy loaded</span></h2>
+          <p style={{ marginBottom: 16, color: '#888', fontSize: 13 }}>Settings module — loaded on demand, not on app startup.</p>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Setting</th><th>Value</th><th>Action</th></tr></thead>
+              <tbody>
+                {[['Theme', 'Light', 'Change'],['Notifications', 'Enabled', 'Disable'],['Language', 'English', 'Change'],['2FA', 'Off', 'Enable']].map(([s,v,a]) => (
+                  <tr key={s}><td>{s}</td><td>{v}</td><td><button style={{ background: '#4f46e5', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>{a}</button></td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    const LazyDashboard = simulateLazyLoad(DashboardPage, 1500);
+    const LazySettings = simulateLazyLoad(SettingsPage, 1000);
+
+    function Fallback({ name }) {
+      return (
+        <div className="page">
+          <div className="skeleton-block">⏳ Loading {name} module...</div>
+        </div>
+      );
+    }
+
+    const routes = [
+      { id: 'home', label: 'Home', Component: HomePage, lazy: false },
+      { id: 'dashboard', label: 'Dashboard', Component: LazyDashboard, lazy: true },
+      { id: 'settings', label: 'Settings', Component: LazySettings, lazy: true },
+    ];
+
+    const loadedModules = new Set(['home']);
+
+    function App() {
+      const [active, setActive] = useState('home');
+      const [moduleLog, setModuleLog] = useState([{ name: 'home', time: 'immediate', status: 'loaded' }]);
+
+      function navigate(id) {
+        setActive(id);
+        if (!loadedModules.has(id)) {
+          const start = Date.now();
+          loadedModules.add(id);
+          const delay = id === 'dashboard' ? 1500 : 1000;
+          setTimeout(() => {
+            setModuleLog(prev => [...prev, { name: id, time: `${delay}ms`, status: 'loaded' }]);
+          }, delay);
+          setModuleLog(prev => [...prev, { name: id, time: '...', status: 'loading' }]);
+        }
+      }
+
+      const route = routes.find(r => r.id === active);
+
+      return (
+        <div>
+          <h1>16 — Lazy Loading Routes</h1>
+          <p className="desc">Features: Simulated React.lazy + Suspense, skeleton fallback, module download log. Each route loads only on first visit.</p>
+
+          <div className="nav">
+            {routes.map(r => (
+              <button key={r.id} className={`nav-btn ${active === r.id ? 'active' : ''}`} onClick={() => navigate(r.id)}>
+                {r.label} {r.lazy && <span className="badge badge-lazy">lazy</span>}
+              </button>
+            ))}
+          </div>
+
+          <Suspense fallback={<Fallback name={route.label} />}>
+            <route.Component />
+          </Suspense>
+
+          <div className="bundle-info" style={{ marginTop: 16 }}>
+            <div style={{ marginBottom: 6, color: '#89b4fa' }}>// Module download log</div>
+            {moduleLog.map((m, i) => (
+              <div key={i}>
+                import('<span className={m.status === 'loaded' ? 'loaded' : 'lazy'}>./{m.name}</span>')
+                {' '}<span className={m.status === 'loaded' ? 'loaded' : 'pending'}>
+                  {m.status === 'loaded' ? `// ✓ loaded in ${m.time}` : `// ⏳ loading...`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

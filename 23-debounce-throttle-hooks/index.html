@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>23 - useDebounce & useThrottle Hooks</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .layout { display: flex; gap: 24px; flex-wrap: wrap; }
+    .panel { background: #fff; border-radius: 10px; padding: 24px; border: 1px solid #e0e0e0; width: 380px; }
+    .panel h2 { font-size: 16px; margin-bottom: 4px; }
+    .panel .subtitle { font-size: 12px; color: #888; margin-bottom: 16px; }
+    input[type=text] { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; margin-bottom: 14px; }
+    input:focus { outline: 2px solid #4f46e5; border-color: transparent; }
+    .value-box { background: #f5f5f5; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 13px; margin-bottom: 10px; }
+    .value-box .label { font-size: 11px; color: #888; font-family: sans-serif; margin-bottom: 4px; }
+    .value-box .val { color: #4f46e5; font-weight: 600; }
+    .counter { display: flex; justify-content: space-between; font-size: 13px; padding: 8px 0; border-top: 1px solid #f0f0f0; margin-top: 8px; }
+    .counter span { color: #4f46e5; font-weight: 700; }
+    .impl { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 16px; font-size: 12px; font-family: monospace; margin-top: 12px; white-space: pre; line-height: 1.6; }
+    .impl .kw { color: #cba6f7; }
+    .impl .fn { color: #89b4fa; }
+    .impl .str { color: #a6e3a1; }
+    .impl .cm { color: #6c7086; }
+    .scroll-demo { height: 200px; overflow-y: scroll; border: 1px solid #e0e0e0; border-radius: 6px; margin-top: 16px; }
+    .scroll-content { height: 600px; padding: 16px; }
+    .scroll-indicator { background: #eef2ff; padding: 10px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ---- useDebounce ----
+    function useDebounce(value, delay) {
+      const [debouncedValue, setDebouncedValue] = useState(value);
+      useEffect(() => {
+        const timer = setTimeout(() => setDebouncedValue(value), delay);
+        return () => clearTimeout(timer); // cleanup cancels pending timer
+      }, [value, delay]);
+      return debouncedValue;
+    }
+
+    // ---- useThrottle ----
+    function useThrottle(value, limit) {
+      const [throttledValue, setThrottledValue] = useState(value);
+      const lastUpdated = useRef(Date.now());
+
+      useEffect(() => {
+        const now = Date.now();
+        const remaining = limit - (now - lastUpdated.current);
+        if (remaining <= 0) {
+          lastUpdated.current = now;
+          setThrottledValue(value);
+        } else {
+          const timer = setTimeout(() => {
+            lastUpdated.current = Date.now();
+            setThrottledValue(value);
+          }, remaining);
+          return () => clearTimeout(timer);
+        }
+      }, [value, limit]);
+
+      return throttledValue;
+    }
+
+    // ---- useThrottleFn (for events) ----
+    function useThrottleFn(fn, limit) {
+      const lastCall = useRef(0);
+      return useCallback((...args) => {
+        const now = Date.now();
+        if (now - lastCall.current >= limit) {
+          lastCall.current = now;
+          fn(...args);
+        }
+      }, [fn, limit]);
+    }
+
+    function DebounceDemo() {
+      const [input, setInput] = useState('');
+      const [keystrokeCount, setKeystrokeCount] = useState(0);
+      const [apiCallCount, setApiCallCount] = useState(0);
+      const debouncedValue = useDebounce(input, 500);
+
+      useEffect(() => {
+        if (debouncedValue) setApiCallCount(c => c + 1);
+      }, [debouncedValue]);
+
+      return (
+        <div className="panel">
+          <h2>useDebounce (500ms)</h2>
+          <p className="subtitle">Value updates only after user stops typing for 500ms. Great for search inputs — avoids calling an API on every keystroke.</p>
+          <input
+            type="text"
+            value={input}
+            onChange={e => { setInput(e.target.value); setKeystrokeCount(c => c + 1); }}
+            placeholder="Type rapidly to see the difference..."
+          />
+          <div className="value-box">
+            <div className="label">Immediate (raw)</div>
+            <div className="val">"{input}"</div>
+          </div>
+          <div className="value-box">
+            <div className="label">Debounced (500ms delay)</div>
+            <div className="val">"{debouncedValue}"</div>
+          </div>
+          <div className="counter">
+            <span>Keystrokes: <span>{keystrokeCount}</span></span>
+            <span>API calls: <span>{apiCallCount}</span> (saved {keystrokeCount - apiCallCount})</span>
+          </div>
+          <div className="impl">{`<span class="kw">function</span> <span class="fn">useDebounce</span>(value, delay) {
+  <span class="kw">const</span> [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    <span class="kw">const</span> timer = setTimeout(
+      () => setDebounced(value), delay
+    );
+    <span class="cm">// cleanup cancels pending call</span>
+    <span class="kw">return</span> () => clearTimeout(timer);
+  }, [value, delay]);
+  <span class="kw">return</span> debounced;
+}`}</div>
+        </div>
+      );
+    }
+
+    function ThrottleDemo() {
+      const [scrollY, setScrollY] = useState(0);
+      const [rawCount, setRawCount] = useState(0);
+      const throttledScrollY = useThrottle(scrollY, 200);
+      const [throttleCount, setThrottleCount] = useState(0);
+
+      useEffect(() => {
+        setThrottleCount(c => c + 1);
+      }, [throttledScrollY]);
+
+      return (
+        <div className="panel">
+          <h2>useThrottle (200ms)</h2>
+          <p className="subtitle">Value updates at most once per 200ms. Great for scroll handlers, resize events, mousemove — limits how often state updates.</p>
+
+          <div className="scroll-indicator">
+            Raw scroll: <strong>{Math.round(scrollY)}px</strong> · Throttled: <strong>{Math.round(throttledScrollY)}px</strong>
+          </div>
+          <div className="counter" style={{ marginBottom: 12 }}>
+            <span>Scroll events: <span>{rawCount}</span></span>
+            <span>State updates: <span>{throttleCount}</span> (throttled)</span>
+          </div>
+
+          <div className="scroll-demo" onScroll={e => { setScrollY(e.currentTarget.scrollTop); setRawCount(c => c + 1); }}>
+            <div className="scroll-content">
+              <p style={{ color: '#888', fontSize: 13 }}>Scroll this box and watch the throttle in action. Raw events fire on every pixel, but state updates are capped at 5/sec (200ms).</p>
+              {Array.from({ length: 15 }, (_, i) => (
+                <p key={i} style={{ marginTop: 24, color: '#555', fontSize: 13 }}>Line {i + 1} — scroll to see throttling effect</p>
+              ))}
+            </div>
+          </div>
+
+          <div className="impl" style={{ marginTop: 12 }}>{`<span class="kw">function</span> <span class="fn">useThrottle</span>(value, limit) {
+  <span class="kw">const</span> [throttled, setThrottled] = useState(value);
+  <span class="kw">const</span> lastUpdated = useRef(Date.now());
+  useEffect(() => {
+    <span class="kw">const</span> remaining = limit - (Date.now() - lastUpdated.current);
+    <span class="kw">if</span> (remaining <= 0) {
+      lastUpdated.current = Date.now();
+      setThrottled(value);
+    } <span class="kw">else</span> {
+      <span class="kw">const</span> t = setTimeout(() => setThrottled(value), remaining);
+      <span class="kw">return</span> () => clearTimeout(t);
+    }
+  }, [value, limit]);
+  <span class="kw">return</span> throttled;
+}`}</div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>23 — useDebounce & useThrottle Hooks</h1>
+          <p className="desc">
+            <strong>Debounce:</strong> delays until input stops. <strong>Throttle:</strong> limits to N times per second. Both built from scratch using setTimeout.
+          </p>
+          <div className="layout">
+            <DebounceDemo />
+            <ThrottleDemo />
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

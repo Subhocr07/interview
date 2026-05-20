@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>18 - Kanban Board</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .board { display: flex; gap: 16px; align-items: flex-start; overflow-x: auto; padding-bottom: 20px; }
+    .column { width: 260px; background: #ebecf0; border-radius: 10px; padding: 12px; flex-shrink: 0; }
+    .col-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .col-title { font-weight: 700; font-size: 14px; }
+    .col-count { background: rgba(0,0,0,0.1); border-radius: 20px; padding: 1px 8px; font-size: 12px; font-weight: 600; }
+    .column.drag-over { background: #dfe1e6; outline: 2px dashed #4f46e5; }
+    .card { background: #fff; border-radius: 6px; padding: 12px; margin-bottom: 8px; cursor: grab; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-size: 13px; user-select: none; position: relative; }
+    .card:active { cursor: grabbing; }
+    .card.dragging { opacity: 0.4; }
+    .card-tag { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-bottom: 6px; }
+    .card-text { line-height: 1.5; color: #333; }
+    .card-meta { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+    .card-priority { font-size: 11px; }
+    .card-remove { background: none; border: none; cursor: pointer; color: #aaa; font-size: 14px; padding: 0; }
+    .card-remove:hover { color: #dc2626; }
+    .add-card { width: 100%; padding: 8px; background: none; border: 1px dashed #aaa; border-radius: 6px; cursor: pointer; font-size: 12px; color: #777; margin-top: 4px; }
+    .add-card:hover { background: rgba(0,0,0,0.05); }
+    .add-form { background: #fff; border-radius: 6px; padding: 10px; margin-top: 4px; }
+    .add-form textarea { width: 100%; border: 1px solid #d1d5db; border-radius: 4px; padding: 6px; font-size: 13px; font-family: inherit; resize: none; }
+    .add-form-btns { display: flex; gap: 6px; margin-top: 6px; }
+    .btn-add { background: #4f46e5; color: #fff; border: none; border-radius: 4px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+    .btn-cancel { background: none; border: none; color: #888; cursor: pointer; font-size: 14px; }
+    .COLORS { --todo: #dbeafe; --doing: #fef3c7; --review: #ede9fe; --done: #d1fae5; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef } = React;
+
+    const COLS = [
+      { id: 'todo', title: 'To Do', color: '#dbeafe', textColor: '#1e40af' },
+      { id: 'doing', title: 'In Progress', color: '#fef3c7', textColor: '#92400e' },
+      { id: 'review', title: 'Review', color: '#ede9fe', textColor: '#5b21b6' },
+      { id: 'done', title: 'Done', color: '#d1fae5', textColor: '#065f46' },
+    ];
+
+    const INITIAL_CARDS = {
+      todo: [
+        { id: 1, text: 'Design new landing page', priority: '🔴 High' },
+        { id: 2, text: 'Set up CI/CD pipeline', priority: '🟡 Medium' },
+        { id: 3, text: 'Write unit tests for auth', priority: '🟢 Low' },
+      ],
+      doing: [
+        { id: 4, text: 'Implement search feature', priority: '🔴 High' },
+        { id: 5, text: 'Fix payment flow bug', priority: '🔴 High' },
+      ],
+      review: [
+        { id: 6, text: 'Dashboard component refactor', priority: '🟡 Medium' },
+      ],
+      done: [
+        { id: 7, text: 'Update dependencies', priority: '🟢 Low' },
+        { id: 8, text: 'Write API documentation', priority: '🟡 Medium' },
+      ],
+    };
+
+    function App() {
+      const [columns, setColumns] = useState(INITIAL_CARDS);
+      const [addingTo, setAddingTo] = useState(null);
+      const [newText, setNewText] = useState('');
+      const dragCardRef = useRef(null);
+      const dragColRef = useRef(null);
+
+      function onDragStart(cardId, colId) {
+        dragCardRef.current = cardId;
+        dragColRef.current = colId;
+      }
+
+      function onDrop(targetColId) {
+        const cardId = dragCardRef.current;
+        const sourceColId = dragColRef.current;
+        if (!cardId || sourceColId === targetColId) return;
+
+        setColumns(prev => {
+          const card = prev[sourceColId].find(c => c.id === cardId);
+          if (!card) return prev;
+          return {
+            ...prev,
+            [sourceColId]: prev[sourceColId].filter(c => c.id !== cardId),
+            [targetColId]: [...prev[targetColId], card],
+          };
+        });
+        dragCardRef.current = null;
+        dragColRef.current = null;
+      }
+
+      function removeCard(colId, cardId) {
+        setColumns(prev => ({ ...prev, [colId]: prev[colId].filter(c => c.id !== cardId) }));
+      }
+
+      function addCard(colId) {
+        if (!newText.trim()) return;
+        setColumns(prev => ({
+          ...prev,
+          [colId]: [...prev[colId], { id: Date.now(), text: newText.trim(), priority: '🟡 Medium' }],
+        }));
+        setNewText('');
+        setAddingTo(null);
+      }
+
+      const [dragOverCol, setDragOverCol] = useState(null);
+
+      return (
+        <div>
+          <h1>18 — Kanban Board</h1>
+          <p className="desc">Features: Drag-and-drop cards between columns (HTML5 DnD API), add/remove cards, visual drag feedback. No external library.</p>
+          <div className="board">
+            {COLS.map(col => (
+              <div
+                key={col.id}
+                className={`column ${dragOverCol === col.id ? 'drag-over' : ''}`}
+                onDragOver={e => { e.preventDefault(); setDragOverCol(col.id); }}
+                onDragLeave={() => setDragOverCol(null)}
+                onDrop={() => { onDrop(col.id); setDragOverCol(null); }}
+              >
+                <div className="col-header">
+                  <span className="col-title">{col.title}</span>
+                  <span className="col-count">{columns[col.id].length}</span>
+                </div>
+
+                {columns[col.id].map(card => (
+                  <div
+                    key={card.id}
+                    className="card"
+                    draggable
+                    onDragStart={() => onDragStart(card.id, col.id)}
+                    onDragEnd={() => setDragOverCol(null)}
+                  >
+                    <span className="card-tag" style={{ background: col.color, color: col.textColor }}>{col.title}</span>
+                    <div className="card-text">{card.text}</div>
+                    <div className="card-meta">
+                      <span className="card-priority">{card.priority}</span>
+                      <button className="card-remove" onClick={() => removeCard(col.id, card.id)}>✕</button>
+                    </div>
+                  </div>
+                ))}
+
+                {addingTo === col.id ? (
+                  <div className="add-form">
+                    <textarea
+                      rows={3}
+                      value={newText}
+                      onChange={e => setNewText(e.target.value)}
+                      placeholder="Enter card text..."
+                      autoFocus
+                    />
+                    <div className="add-form-btns">
+                      <button className="btn-add" onClick={() => addCard(col.id)}>Add Card</button>
+                      <button className="btn-cancel" onClick={() => { setAddingTo(null); setNewText(''); }}>✕</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button className="add-card" onClick={() => setAddingTo(col.id)}>+ Add a card</button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

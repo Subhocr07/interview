@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>26 - useOutsideClick Hook</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .demos { display: flex; gap: 24px; flex-wrap: wrap; }
+    .card { background: #fff; border-radius: 10px; padding: 24px; border: 1px solid #e0e0e0; width: 280px; }
+    .card h3 { font-size: 14px; margin-bottom: 14px; }
+    /* Dropdown */
+    .dropdown-wrapper { position: relative; }
+    .dropdown-btn { padding: 10px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; width: 100%; text-align: left; display: flex; justify-content: space-between; }
+    .dropdown-menu { position: absolute; top: calc(100% + 6px); left: 0; right: 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); overflow: hidden; z-index: 100; animation: fadeDown 0.15s ease; }
+    @keyframes fadeDown { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+    .dropdown-item { padding: 10px 14px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+    .dropdown-item:hover { background: #eef2ff; }
+    /* Popover */
+    .popover-wrapper { position: relative; }
+    .popover-trigger { padding: 10px 16px; background: #059669; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; width: 100%; }
+    .popover { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 14px; width: 220px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); z-index: 100; animation: fadeDown 0.15s ease; }
+    .popover::before { content: ''; position: absolute; top: -6px; left: 50%; transform: translateX(-50%); border: 6px solid transparent; border-bottom-color: #1e1e2e; border-top: none; }
+    .popover h4 { font-size: 12px; color: #89b4fa; margin-bottom: 6px; }
+    /* Modal */
+    .modal-btn { padding: 10px 16px; background: #7c3aed; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; width: 100%; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .modal-box { background: #fff; border-radius: 10px; padding: 24px; width: 320px; }
+    .modal-box h4 { margin-bottom: 10px; }
+    .modal-box p { font-size: 13px; color: #666; line-height: 1.5; margin-bottom: 16px; }
+    .modal-box button { padding: 8px 18px; background: #7c3aed; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    /* Event log */
+    .log { background: #f5f5f5; border-radius: 6px; padding: 10px; max-height: 120px; overflow-y: auto; font-size: 12px; font-family: monospace; }
+    .log-entry { padding: 2px 0; color: #555; }
+    .log-entry.close { color: #059669; }
+    .impl { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 14px; font-size: 12px; font-family: monospace; white-space: pre-wrap; line-height: 1.6; margin-top: 20px; max-width: 600px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // The hook
+    function useOutsideClick(callback, enabled = true) {
+      const ref = useRef(null);
+      const savedCallback = useRef(callback);
+      useEffect(() => { savedCallback.current = callback; }, [callback]);
+
+      useEffect(() => {
+        if (!enabled) return;
+        function handleClick(e) {
+          if (ref.current && !ref.current.contains(e.target)) {
+            savedCallback.current(e);
+          }
+        }
+        // Use mousedown so it fires before click-based focus changes
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+      }, [enabled]);
+
+      return ref;
+    }
+
+    function addLog(setLog, msg, cls = '') {
+      setLog(prev => [{ msg, cls, time: new Date().toLocaleTimeString() }, ...prev].slice(0, 8));
+    }
+
+    function DropdownDemo({ setLog }) {
+      const [open, setOpen] = useState(false);
+      const ref = useOutsideClick(() => { if (open) { setOpen(false); addLog(setLog, 'Dropdown closed (outside click)', 'close'); } }, open);
+      const items = ['Profile', 'Settings', 'Billing', 'Sign Out'];
+      return (
+        <div className="card">
+          <h3>Dropdown Menu</h3>
+          <div className="dropdown-wrapper" ref={ref}>
+            <button className="dropdown-btn" onClick={() => setOpen(o => !o)}>
+              Account {open ? '▲' : '▼'}
+            </button>
+            {open && (
+              <div className="dropdown-menu">
+                {items.map(item => (
+                  <div key={item} className="dropdown-item" onClick={() => { addLog(setLog, `Clicked: ${item}`); setOpen(false); }}>
+                    {item === 'Sign Out' ? '🚪' : item === 'Profile' ? '👤' : item === 'Settings' ? '⚙️' : '💳'} {item}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <p style={{ fontSize: 12, color: '#888', marginTop: 10 }}>Click outside the menu to close it.</p>
+        </div>
+      );
+    }
+
+    function PopoverDemo({ setLog }) {
+      const [open, setOpen] = useState(false);
+      const ref = useOutsideClick(() => { if (open) { setOpen(false); addLog(setLog, 'Popover dismissed (outside click)', 'close'); } }, open);
+      return (
+        <div className="card">
+          <h3>Info Popover</h3>
+          <div className="popover-wrapper" ref={ref}>
+            <button className="popover-trigger" onClick={() => setOpen(o => !o)}>
+              {open ? 'Hide Info' : 'Show Info'}
+            </button>
+            {open && (
+              <div className="popover">
+                <h4>useOutsideClick</h4>
+                This popover closes when you click anywhere outside of this wrapper element. The hook uses a ref to track the boundary.
+              </div>
+            )}
+          </div>
+          <p style={{ fontSize: 12, color: '#888', marginTop: 10 }}>Click outside the popover to dismiss.</p>
+        </div>
+      );
+    }
+
+    function ModalDemo({ setLog }) {
+      const [open, setOpen] = useState(false);
+      const ref = useOutsideClick(() => { if (open) { setOpen(false); addLog(setLog, 'Modal closed (backdrop click)', 'close'); } }, open);
+      return (
+        <div className="card">
+          <h3>Modal (click outside)</h3>
+          <button className="modal-btn" onClick={() => setOpen(true)}>Open Modal</button>
+          {open && ReactDOM.createPortal(
+            <div className="modal-overlay">
+              <div className="modal-box" ref={ref}>
+                <h4>Confirmation</h4>
+                <p>Click outside this dialog (on the dark backdrop) to close it. The ref is attached to the modal box itself.</p>
+                <button onClick={() => setOpen(false)}>Close</button>
+              </div>
+            </div>,
+            document.body
+          )}
+          <p style={{ fontSize: 12, color: '#888', marginTop: 10 }}>Click the dark backdrop to close.</p>
+        </div>
+      );
+    }
+
+    function App() {
+      const [log, setLog] = useState([{ msg: 'Ready — interact with the demos above', cls: '', time: '' }]);
+
+      return (
+        <div>
+          <h1>26 — useOutsideClick Hook</h1>
+          <p className="desc">Features: Mousedown listener, stable callback ref, optional enabled flag, works for dropdown/popover/modal patterns.</p>
+          <div className="demos">
+            <DropdownDemo setLog={setLog} />
+            <PopoverDemo setLog={setLog} />
+            <ModalDemo setLog={setLog} />
+          </div>
+
+          <div style={{ marginTop: 20, maxWidth: 600 }}>
+            <p style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>Event log:</p>
+            <div className="log">
+              {log.map((e, i) => (
+                <div key={i} className={`log-entry ${e.cls}`}>
+                  {e.time && `[${e.time}] `}{e.msg}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="impl">{`function useOutsideClick(callback, enabled = true) {
+  const ref = useRef(null);
+  const savedCallback = useRef(callback);
+  useEffect(() => { savedCallback.current = callback; }, [callback]);
+
+  useEffect(() => {
+    if (!enabled) return; // disable when panel is closed
+
+    function handleClick(e) {
+      // If click target is OUTSIDE the ref element → call callback
+      if (ref.current && !ref.current.contains(e.target)) {
+        savedCallback.current(e);
+      }
+    }
+
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [enabled]);
+
+  return ref; // attach to the boundary element
+}
+
+// Usage:
+const ref = useOutsideClick(() => setOpen(false), open);
+return <div ref={ref}>...dropdown content...</div>;`}</div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

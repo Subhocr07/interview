@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>25 - Compound Component Pattern</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .demos { display: flex; flex-direction: column; gap: 32px; max-width: 600px; }
+    .demo-section { background: #fff; border-radius: 10px; padding: 24px; border: 1px solid #e0e0e0; }
+    .demo-section h3 { font-size: 13px; color: #888; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 16px; }
+    /* Select component styles */
+    .select-wrapper { position: relative; width: 280px; }
+    .select-trigger { width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; cursor: pointer; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+    .select-trigger:hover { border-color: #4f46e5; }
+    .select-trigger.open { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+    .select-trigger .chevron { font-size: 10px; transition: transform 0.2s; }
+    .select-trigger.open .chevron { transform: rotate(180deg); }
+    .select-dropdown { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); z-index: 100; overflow: hidden; }
+    .select-option { padding: 10px 14px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+    .select-option:hover { background: #eef2ff; color: #4f46e5; }
+    .select-option.selected { background: #eef2ff; color: #4f46e5; font-weight: 500; }
+    .select-option.selected::after { content: '✓'; margin-left: auto; }
+    .select-option.disabled { color: #aaa; cursor: not-allowed; pointer-events: none; }
+    .select-group-label { padding: 6px 14px 4px; font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .05em; font-weight: 700; background: #f9f9f9; }
+    .select-divider { height: 1px; background: #f0f0f0; margin: 4px 0; }
+    /* Tabs compound */
+    .tabs { border-radius: 8px; overflow: hidden; }
+    .tabs-list { display: flex; background: #f5f5f5; border-radius: 8px 8px 0 0; }
+    .tab-trigger { flex: 1; padding: 10px; border: none; background: none; cursor: pointer; font-size: 13px; font-weight: 500; color: #666; border-radius: 6px 6px 0 0; }
+    .tab-trigger.active { background: #fff; color: #4f46e5; box-shadow: 0 1px 0 #fff; }
+    .tabs-content { background: #fff; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px; padding: 20px; font-size: 14px; color: #555; line-height: 1.6; }
+    .impl { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 14px; font-size: 12px; font-family: monospace; white-space: pre-wrap; line-height: 1.6; margin-top: 14px; }
+    .selected-info { margin-top: 10px; font-size: 13px; color: #888; }
+    .selected-info strong { color: #4f46e5; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useContext, createContext, useRef, useEffect } = React;
+
+    // ======= Compound Select =======
+    const SelectContext = createContext(null);
+
+    function Select({ value, onChange, placeholder = 'Select...', children }) {
+      const [open, setOpen] = useState(false);
+      const wrapRef = useRef(null);
+
+      useEffect(() => {
+        function handleClick(e) { if (!wrapRef.current?.contains(e.target)) setOpen(false); }
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+      }, []);
+
+      return (
+        <SelectContext.Provider value={{ value, onChange: (v) => { onChange(v); setOpen(false); }, open, setOpen }}>
+          <div className="select-wrapper" ref={wrapRef}>{children}</div>
+        </SelectContext.Provider>
+      );
+    }
+
+    Select.Trigger = function SelectTrigger({ placeholder }) {
+      const { value, open, setOpen } = useContext(SelectContext);
+      return (
+        <button type="button" className={`select-trigger ${open ? 'open' : ''}`} onClick={() => setOpen(o => !o)} aria-haspopup="listbox" aria-expanded={open}>
+          <span>{value || placeholder || 'Select...'}</span>
+          <span className="chevron">▼</span>
+        </button>
+      );
+    };
+
+    Select.Dropdown = function SelectDropdown({ children }) {
+      const { open } = useContext(SelectContext);
+      if (!open) return null;
+      return <div className="select-dropdown" role="listbox">{children}</div>;
+    };
+
+    Select.Option = function SelectOption({ value, disabled, icon, children }) {
+      const { value: selected, onChange } = useContext(SelectContext);
+      return (
+        <div
+          className={`select-option ${selected === value ? 'selected' : ''} ${disabled ? 'disabled' : ''}`}
+          role="option"
+          aria-selected={selected === value}
+          onClick={() => !disabled && onChange(value)}
+        >
+          {icon && <span>{icon}</span>}
+          {children}
+        </div>
+      );
+    };
+
+    Select.Group = function SelectGroup({ label, children }) {
+      return <><div className="select-group-label">{label}</div>{children}</>;
+    };
+
+    Select.Divider = function SelectDivider() {
+      return <div className="select-divider" />;
+    };
+
+    // ======= Compound Tabs =======
+    const TabsContext = createContext(null);
+
+    function Tabs({ defaultTab, children }) {
+      const [active, setActive] = useState(defaultTab);
+      return <TabsContext.Provider value={{ active, setActive }}><div className="tabs">{children}</div></TabsContext.Provider>;
+    }
+
+    Tabs.List = function TabsList({ children }) {
+      return <div className="tabs-list" role="tablist">{children}</div>;
+    };
+
+    Tabs.Tab = function TabsTab({ value, children }) {
+      const { active, setActive } = useContext(TabsContext);
+      return (
+        <button className={`tab-trigger ${active === value ? 'active' : ''}`} role="tab" aria-selected={active === value} onClick={() => setActive(value)}>
+          {children}
+        </button>
+      );
+    };
+
+    Tabs.Panel = function TabsPanel({ value, children }) {
+      const { active } = useContext(TabsContext);
+      if (active !== value) return null;
+      return <div className="tabs-content" role="tabpanel">{children}</div>;
+    };
+
+    function App() {
+      const [lang, setLang] = useState('');
+      const [country, setCountry] = useState('');
+
+      return (
+        <div>
+          <h1>25 — Compound Component Pattern</h1>
+          <p className="desc">Features: Context-based state sharing, composable sub-components (Select.Trigger, Select.Option, etc.). Consumer controls layout.</p>
+          <div className="demos">
+            <div className="demo-section">
+              <h3>Select — Compound Component</h3>
+              <Select value={lang} onChange={setLang} placeholder="Choose a language...">
+                <Select.Trigger placeholder="Choose a language..." />
+                <Select.Dropdown>
+                  <Select.Group label="Frontend">
+                    <Select.Option value="React" icon="⚛️">React</Select.Option>
+                    <Select.Option value="Vue" icon="💚">Vue</Select.Option>
+                    <Select.Option value="Angular" icon="🔴">Angular</Select.Option>
+                  </Select.Group>
+                  <Select.Divider />
+                  <Select.Group label="Backend">
+                    <Select.Option value="Node.js" icon="🟢">Node.js</Select.Option>
+                    <Select.Option value="Python" icon="🐍">Python</Select.Option>
+                    <Select.Option value="Rust" icon="🦀" disabled>Rust (disabled)</Select.Option>
+                  </Select.Group>
+                </Select.Dropdown>
+              </Select>
+              {lang && <p className="selected-info">Selected: <strong>{lang}</strong></p>}
+              <div className="impl">{`// Usage — consumer controls layout completely:
+<Select value={lang} onChange={setLang}>
+  <Select.Trigger placeholder="Choose a language..." />
+  <Select.Dropdown>
+    <Select.Group label="Frontend">
+      <Select.Option value="React" icon="⚛️">React</Select.Option>
+      <Select.Option value="Vue" icon="💚">Vue</Select.Option>
+    </Select.Group>
+    <Select.Divider />
+    <Select.Option value="Node.js" icon="🟢">Node.js</Select.Option>
+  </Select.Dropdown>
+</Select>
+
+// Context is shared via React.createContext —
+// sub-components read from it without prop drilling`}</div>
+            </div>
+
+            <div className="demo-section">
+              <h3>Tabs — Compound Component</h3>
+              <Tabs defaultTab="overview">
+                <Tabs.List>
+                  <Tabs.Tab value="overview">Overview</Tabs.Tab>
+                  <Tabs.Tab value="api">API</Tabs.Tab>
+                  <Tabs.Tab value="examples">Examples</Tabs.Tab>
+                </Tabs.List>
+                <Tabs.Panel value="overview">
+                  This is the Overview panel. Each panel only renders when active.
+                  The parent Tabs component holds the active state via Context.
+                </Tabs.Panel>
+                <Tabs.Panel value="api">
+                  API panel content — Tabs.List, Tabs.Tab, Tabs.Panel share state without prop drilling.
+                </Tabs.Panel>
+                <Tabs.Panel value="examples">
+                  Examples panel — compound components let you compose UIs flexibly while keeping the shared logic in one place.
+                </Tabs.Panel>
+              </Tabs>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

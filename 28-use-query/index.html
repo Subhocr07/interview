@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>28 - useQuery Hook (Mini React Query)</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #e0e0e0; width: 360px; }
+    .panel h3 { font-size: 13px; color: #888; text-transform: uppercase; margin-bottom: 14px; }
+    .status-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+    .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-loading { background: #fef3c7; color: #92400e; }
+    .badge-success { background: #d1fae5; color: #065f46; }
+    .badge-error { background: #fee2e2; color: #991b1b; }
+    .badge-stale { background: #e0e7ff; color: #3730a3; }
+    .badge-fetching { background: #dbeafe; color: #1e40af; }
+    button { padding: 7px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; background: #4f46e5; color: #fff; }
+    button:hover { background: #4338ca; }
+    button.secondary { background: #e5e7eb; color: #333; }
+    button.secondary:hover { background: #d1d5db; }
+    .user-card { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid #f5f5f5; }
+    .user-card:last-child { border-bottom: none; }
+    .avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; font-size: 14px; flex-shrink: 0; }
+    .user-name { font-size: 13px; font-weight: 600; }
+    .user-email { font-size: 11px; color: #888; }
+    .error-box { background: #fef2f2; border: 1px solid #fca5a5; border-radius: 6px; padding: 12px; color: #dc2626; font-size: 13px; }
+    .cache-panel { background: #1e1e2e; color: #cdd6f4; border-radius: 10px; padding: 20px; width: 100%; max-width: 740px; }
+    .cache-panel h3 { color: #89b4fa; font-size: 14px; margin-bottom: 12px; }
+    .cache-entry { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #313244; font-size: 12px; font-family: monospace; }
+    .cache-entry:last-child { border-bottom: none; }
+    .ce-key { color: #cba6f7; }
+    .ce-status { }
+    .ce-status.fresh { color: #a6e3a1; }
+    .ce-status.stale { color: #f9e2af; }
+    .ce-status.loading { color: #89b4fa; }
+    .controls { display: flex; gap: 8px; margin-bottom: 14px; }
+    select { padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback, createContext, useContext } = React;
+
+    // ===== Query Cache =====
+    const queryCache = new Map();
+    const subscribers = new Map();
+
+    function getCacheEntry(key) { return queryCache.get(key); }
+
+    function setCacheEntry(key, patch) {
+      const existing = queryCache.get(key) || { status: 'idle', data: null, error: null, updatedAt: null, isFetching: false };
+      const next = { ...existing, ...patch };
+      queryCache.set(key, next);
+      // Notify all subscribers for this key
+      (subscribers.get(key) || new Set()).forEach(fn => fn(next));
+    }
+
+    function subscribeToKey(key, fn) {
+      if (!subscribers.has(key)) subscribers.set(key, new Set());
+      subscribers.get(key).add(fn);
+      return () => subscribers.get(key).delete(fn);
+    }
+
+    const STALE_TIME = 5000; // 5s
+
+    async function fetchQuery(key, fetcher) {
+      const cached = getCacheEntry(key);
+      // Deduplicate in-flight requests
+      if (cached?.isFetching) return;
+      // Stale-while-revalidate: serve stale data but refetch in background
+      if (cached?.data && Date.now() - cached.updatedAt < STALE_TIME) return;
+
+      setCacheEntry(key, { isFetching: true, status: cached?.data ? cached.status : 'loading' });
+      try {
+        const data = await fetcher();
+        setCacheEntry(key, { status: 'success', data, error: null, updatedAt: Date.now(), isFetching: false });
+      } catch (error) {
+        setCacheEntry(key, { status: 'error', error: error.message, isFetching: false });
+      }
+    }
+
+    function useQuery(key, fetcher, { enabled = true } = {}) {
+      const [state, setState] = useState(() => getCacheEntry(key) || { status: 'idle', data: null, error: null, isFetching: false });
+
+      useEffect(() => {
+        return subscribeToKey(key, setState);
+      }, [key]);
+
+      useEffect(() => {
+        if (!enabled) return;
+        fetchQuery(key, fetcher);
+      }, [key, enabled]);
+
+      const refetch = useCallback(() => {
+        setCacheEntry(key, { updatedAt: 0 }); // Force stale
+        fetchQuery(key, fetcher);
+      }, [key, fetcher]);
+
+      const isStale = state.updatedAt && Date.now() - state.updatedAt >= STALE_TIME;
+
+      return { ...state, refetch, isStale };
+    }
+
+    // ===== API =====
+    const COLORS = ['#4f46e5','#059669','#dc2626','#d97706','#7c3aed'];
+    function fakeUsersApi(count = 5) {
+      return new Promise((resolve, reject) => {
+        setTimeout(() => {
+          if (Math.random() < 0.1) { reject(new Error('Network error')); return; }
+          resolve(Array.from({ length: count }, (_, i) => ({
+            id: i + 1,
+            name: ['Alice','Bob','Charlie','Diana','Eve'][i],
+            email: `user${i+1}@example.com`,
+            color: COLORS[i % COLORS.length],
+          })));
+        }, 600 + Math.random() * 800);
+      });
+    }
+
+    function UserListPanel({ queryKey, title, count }) {
+      const { data, status, error, isFetching, isStale, refetch } = useQuery(
+        queryKey,
+        () => fakeUsersApi(count)
+      );
+
+      return (
+        <div className="panel">
+          <h3>{title}</h3>
+          <div className="controls">
+            <button onClick={refetch}>⟳ Refetch</button>
+          </div>
+          <div className="status-row">
+            {status === 'loading' && <span className="badge badge-loading">⏳ Loading</span>}
+            {status === 'success' && <span className="badge badge-success">✓ Success</span>}
+            {status === 'error' && <span className="badge badge-error">✕ Error</span>}
+            {isFetching && status !== 'loading' && <span className="badge badge-fetching">↻ Refetching</span>}
+            {isStale && !isFetching && <span className="badge badge-stale">⚠ Stale</span>}
+          </div>
+
+          {error && <div className="error-box">⚠ {error}</div>}
+          {data?.map(u => (
+            <div className="user-card" key={u.id}>
+              <div className="avatar" style={{ background: u.color }}>{u.name[0]}</div>
+              <div>
+                <div className="user-name">{u.name}</div>
+                <div className="user-email">{u.email}</div>
+              </div>
+            </div>
+          ))}
+          {status === 'loading' && <p style={{ color: '#aaa', fontSize: 13 }}>Fetching data...</p>}
+        </div>
+      );
+    }
+
+    function CacheViewer() {
+      const [, forceRender] = useState(0);
+      useEffect(() => {
+        const interval = setInterval(() => forceRender(n => n + 1), 500);
+        return () => clearInterval(interval);
+      }, []);
+
+      const entries = Array.from(queryCache.entries()).map(([key, val]) => ({
+        key,
+        status: val.status,
+        isFetching: val.isFetching,
+        age: val.updatedAt ? `${((Date.now() - val.updatedAt) / 1000).toFixed(1)}s` : 'N/A',
+        stale: val.updatedAt ? Date.now() - val.updatedAt >= STALE_TIME : false,
+      }));
+
+      return (
+        <div className="cache-panel">
+          <h3>🗄 Query Cache (updates every 500ms)</h3>
+          {entries.length === 0 && <div style={{ color: '#6c7086', fontSize: 12 }}>No cached queries yet</div>}
+          {entries.map(e => (
+            <div className="cache-entry" key={e.key}>
+              <span className="ce-key">"{e.key}"</span>
+              <span className={`ce-status ${e.isFetching ? 'loading' : e.stale ? 'stale' : 'fresh'}`}>
+                {e.isFetching ? '↻ fetching' : e.stale ? `⚠ stale (${e.age})` : `✓ fresh (${e.age})`}
+              </span>
+            </div>
+          ))}
+          <p style={{ fontSize: 11, color: '#6c7086', marginTop: 10 }}>Stale time: {STALE_TIME/1000}s — data served from cache, refetch happens in background after stale</p>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>28 — useQuery Hook (Mini React Query)</h1>
+          <p className="desc">Features: In-memory cache, deduplication, stale-while-revalidate ({STALE_TIME/1000}s stale time), background refetch, shared cache across components.</p>
+          <div className="layout">
+            <UserListPanel queryKey="users-5" title="Users (5)" count={5} />
+            <UserListPanel queryKey="users-3" title="Users (3) — separate key" count={3} />
+          </div>
+          <p style={{ fontSize: 12, color: '#888', margin: '16px 0 8px' }}>
+            Both panels share the same cache. Clicking Refetch in one panel updates both (if same key). After {STALE_TIME/1000}s data is stale and background-refetched on next render.
+          </p>
+          <CacheViewer />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

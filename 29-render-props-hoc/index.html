@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>29 - Render Props vs HOC</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 900px; }
+    .card { background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #e0e0e0; }
+    .card h2 { font-size: 15px; margin-bottom: 4px; }
+    .card .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-bottom: 12px; margin-left: 8px; }
+    .badge-rp { background: #dbeafe; color: #1e40af; }
+    .badge-hoc { background: #ede9fe; color: #5b21b6; }
+    .badge-hook { background: #d1fae5; color: #065f46; }
+    .mouse-area { height: 100px; background: linear-gradient(135deg, #f5f5f5, #eef2ff); border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: crosshair; position: relative; overflow: hidden; font-size: 12px; color: #aaa; margin-bottom: 10px; }
+    .mouse-dot { position: absolute; width: 8px; height: 8px; background: #4f46e5; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+    .coords { font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 8px 10px; border-radius: 6px; color: #4f46e5; }
+    .toggle-area { padding: 4px; }
+    .toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .toggle-label { font-size: 13px; font-weight: 500; }
+    .toggle { width: 40px; height: 22px; background: #e0e0e0; border-radius: 11px; cursor: pointer; position: relative; transition: background 0.2s; border: none; }
+    .toggle.on { background: #4f46e5; }
+    .toggle::after { content: ''; position: absolute; width: 16px; height: 16px; background: #fff; border-radius: 50%; top: 3px; left: 3px; transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+    .toggle.on::after { transform: translateX(18px); }
+    .impl { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 12px; font-size: 11px; font-family: monospace; white-space: pre-wrap; line-height: 1.6; margin-top: 10px; }
+    .impl .kw { color: #cba6f7; }
+    .impl .fn { color: #89b4fa; }
+    .impl .cm { color: #6c7086; }
+    .impl .str { color: #a6e3a1; }
+    .comparison { background: #fff; border-radius: 10px; padding: 24px; border: 1px solid #e0e0e0; margin-top: 16px; max-width: 900px; }
+    .comparison h3 { font-size: 15px; margin-bottom: 14px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f5f5f5; padding: 8px 12px; text-align: left; font-weight: 600; }
+    td { padding: 8px 12px; border-bottom: 1px solid #f0f0f0; }
+    td.good { color: #059669; }
+    td.bad { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useCallback } = React;
+
+    // ===== Feature: Mouse Tracker =====
+
+    // 1. Render Props
+    function MouseTracker({ render }) {
+      const [pos, setPos] = useState({ x: 0, y: 0 });
+      return (
+        <div
+          className="mouse-area"
+          onMouseMove={e => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setPos({ x: Math.round(e.clientX - rect.left), y: Math.round(e.clientY - rect.top) });
+          }}
+        >
+          <div className="mouse-dot" style={{ left: pos.x, top: pos.y }} />
+          {render(pos)}
+        </div>
+      );
+    }
+
+    // 2. HOC (Higher-Order Component)
+    function withMouse(Component) {
+      return function WithMouseWrapper(props) {
+        const [pos, setPos] = useState({ x: 0, y: 0 });
+        return (
+          <div
+            className="mouse-area"
+            onMouseMove={e => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setPos({ x: Math.round(e.clientX - rect.left), y: Math.round(e.clientY - rect.top) });
+            }}
+          >
+            <div className="mouse-dot" style={{ left: pos.x, top: pos.y }} />
+            <Component {...props} mouse={pos} />
+          </div>
+        );
+      };
+    }
+
+    // 3. Custom Hook (modern approach)
+    function useMouse(ref) {
+      const [pos, setPos] = useState({ x: 0, y: 0 });
+      const handleMove = useCallback((e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        setPos({ x: Math.round(e.clientX - rect.left), y: Math.round(e.clientY - rect.top) });
+      }, []);
+      return { pos, handlers: { onMouseMove: handleMove } };
+    }
+
+    // ===== Feature: Toggle =====
+
+    // 1. Render Props Toggle
+    function Toggle({ initial = false, render }) {
+      const [on, setOn] = useState(initial);
+      return render({ on, toggle: () => setOn(o => !o) });
+    }
+
+    // 2. HOC Toggle
+    function withToggle(Component) {
+      return function WithToggleWrapper(props) {
+        const [on, setOn] = useState(false);
+        return <Component {...props} on={on} toggle={() => setOn(o => !o)} />;
+      };
+    }
+
+    // 3. Custom Hook Toggle
+    function useToggle(initial = false) {
+      const [on, setOn] = useState(initial);
+      return { on, toggle: () => setOn(o => !o) };
+    }
+
+    // ===== Display Components =====
+    function CoordsDisplay({ x, y }) {
+      return <div className="coords" style={{ position: 'absolute', bottom: 8, left: 8 }}>x:{x} y:{y}</div>;
+    }
+
+    const HocMouseDisplay = withMouse(function({ mouse }) {
+      return <div className="coords" style={{ position: 'absolute', bottom: 8, left: 8 }}>x:{mouse.x} y:{mouse.y}</div>;
+    });
+
+    function ToggleButton({ on, toggle, label }) {
+      return (
+        <div className="toggle-row">
+          <button className={`toggle ${on ? 'on' : ''}`} onClick={toggle} aria-pressed={on} />
+          <span className="toggle-label">{label}: {on ? '✓ On' : '✗ Off'}</span>
+        </div>
+      );
+    }
+
+    const HocToggleButton = withToggle(function({ on, toggle }) {
+      return <ToggleButton on={on} toggle={toggle} label="HOC Toggle" />;
+    });
+
+    function HookMouseDemo() {
+      const [pos, setPos] = useState({ x: 0, y: 0 });
+      const handleMove = useCallback((e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        setPos({ x: Math.round(e.clientX - rect.left), y: Math.round(e.clientY - rect.top) });
+      }, []);
+      return (
+        <div className="mouse-area" onMouseMove={handleMove}>
+          <div className="mouse-dot" style={{ left: pos.x, top: pos.y }} />
+          <div className="coords" style={{ position: 'absolute', bottom: 8, left: 8 }}>x:{pos.x} y:{pos.y}</div>
+        </div>
+      );
+    }
+
+    function HookToggleDemo() {
+      const { on, toggle } = useToggle(false);
+      const { on: on2, toggle: toggle2 } = useToggle(true);
+      return (
+        <div className="toggle-area">
+          <ToggleButton on={on} toggle={toggle} label="Notifications" />
+          <ToggleButton on={on2} toggle={toggle2} label="Dark Mode" />
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>29 — Render Props vs HOC vs Custom Hook</h1>
+          <p className="desc">Same feature (mouse tracker + toggle) implemented 3 ways. Custom hooks (modern) solve the wrapper-hell problem of the older patterns.</p>
+
+          <div className="grid">
+            <div className="card">
+              <h2>Render Props<span className="badge badge-rp">pattern</span></h2>
+              <MouseTracker render={(pos) => <CoordsDisplay {...pos} />} />
+              <Toggle render={({ on, toggle }) => <ToggleButton on={on} toggle={toggle} label="Render Prop" />} />
+              <div className="impl">{`<span class="fn">MouseTracker</span> render={<span class="fn">pos</span> => (
+  <span class="fn">CoordsDisplay</span> x={pos.x} y={pos.y} />
+)}
+
+<span class="cm">// Logic lives in MouseTracker,
+// UI customized via render prop</span>`}</div>
+            </div>
+
+            <div className="card">
+              <h2>HOC<span className="badge badge-hoc">pattern</span></h2>
+              <HocMouseDisplay />
+              <HocToggleButton />
+              <div className="impl">{`<span class="kw">const</span> Enhanced = <span class="fn">withMouse</span>(MyComponent);
+<span class="cm">// ↑ wraps component, injects mouse prop</span>
+
+<span class="fn">&lt;Enhanced&gt;</span>
+<span class="cm">// receives props.mouse automatically
+// Hard to tell which prop came from which HOC</span>`}</div>
+            </div>
+
+            <div className="card">
+              <h2>Custom Hook<span className="badge badge-hook">modern ✓</span></h2>
+              <HookMouseDemo />
+              <HookToggleDemo />
+              <div className="impl">{`<span class="kw">const</span> { pos } = <span class="fn">useMouse</span>();
+<span class="kw">const</span> { on, toggle } = <span class="fn">useToggle</span>();
+
+<span class="cm">// No wrapper components!
+// Full composability, no naming conflicts,
+// clear where each value comes from</span>`}</div>
+            </div>
+          </div>
+
+          <div className="comparison">
+            <h3>When to use which?</h3>
+            <table>
+              <thead><tr><th>Concern</th><th>Render Props</th><th>HOC</th><th>Custom Hook</th></tr></thead>
+              <tbody>
+                <tr><td>Composition</td><td>Manual via JSX</td><td>Implicit wrapping</td><td className="good">✓ Most flexible</td></tr>
+                <tr><td>Debugging</td><td>OK</td><td className="bad">Extra wrapper layers</td><td className="good">✓ Clean tree</td></tr>
+                <tr><td>TypeScript</td><td>OK</td><td className="bad">Complex generics</td><td className="good">✓ Simple types</td></tr>
+                <tr><td>Reuse in non-React</td><td>React only</td><td>React only</td><td className="good">✓ Hook = plain function</td></tr>
+                <tr><td>Use case</td><td>Flexible UI sharing</td><td>Class components</td><td className="good">✓ Default choice</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

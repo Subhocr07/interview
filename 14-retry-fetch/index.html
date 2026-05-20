@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>14 - Retry-on-Failure Fetch</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .config { background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #e0e0e0; margin-bottom: 20px; max-width: 560px; }
+    .config h3 { font-size: 14px; color: #888; text-transform: uppercase; margin-bottom: 14px; }
+    .config-row { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+    .config-item { display: flex; flex-direction: column; gap: 4px; }
+    .config-item label { font-size: 12px; color: #888; font-weight: 600; }
+    input[type=range] { width: 120px; }
+    .config-val { font-size: 13px; font-weight: 700; color: #4f46e5; }
+    .controls { display: flex; gap: 10px; margin-bottom: 20px; }
+    button { padding: 9px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .btn-primary { background: #4f46e5; color: #fff; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-danger { background: #dc2626; color: #fff; }
+    select { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+    .timeline { max-width: 560px; }
+    .attempt { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+    .attempt-num { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; flex-shrink: 0; }
+    .attempt-num.fail { background: #fee2e2; color: #dc2626; }
+    .attempt-num.wait { background: #fef3c7; color: #92400e; }
+    .attempt-num.success { background: #d1fae5; color: #059669; }
+    .attempt-info { flex: 1; }
+    .attempt-label { font-weight: 600; margin-bottom: 2px; }
+    .attempt-time { color: #888; font-size: 11px; }
+    .attempt-delay { color: #f59e0b; font-size: 11px; margin-top: 2px; }
+    .final-status { margin-top: 16px; padding: 14px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+    .final-success { background: #d1fae5; color: #065f46; }
+    .final-error { background: #fee2e2; color: #991b1b; }
+    .spinner { width: 18px; height: 18px; border: 2px solid #e0e0e0; border-top-color: #4f46e5; border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; vertical-align: middle; margin-right: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .countdown { color: #f59e0b; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useCallback } = React;
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function fetchWithRetry(url, { maxRetries = 3, baseDelay = 500, failRate = 0.7, onAttempt } = {}) {
+      for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+        onAttempt({ attempt, status: 'trying', time: new Date().toLocaleTimeString() });
+
+        // Simulate network with configurable failure rate
+        await sleep(300 + Math.random() * 400);
+        const shouldFail = Math.random() < failRate;
+
+        if (shouldFail && attempt <= maxRetries) {
+          const delay = baseDelay * Math.pow(2, attempt - 1); // exponential: 500, 1000, 2000ms
+          onAttempt({ attempt, status: 'fail', delay, time: new Date().toLocaleTimeString() });
+          await sleep(delay);
+        } else if (!shouldFail) {
+          const data = { message: 'Request successful!', attempt, timestamp: new Date().toISOString() };
+          onAttempt({ attempt, status: 'success', data, time: new Date().toLocaleTimeString() });
+          return data;
+        } else {
+          // Exhausted retries
+          onAttempt({ attempt, status: 'exhausted', time: new Date().toLocaleTimeString() });
+          throw new Error(`Failed after ${maxRetries + 1} attempts`);
+        }
+      }
+    }
+
+    function App() {
+      const [attempts, setAttempts] = useState([]);
+      const [running, setRunning] = useState(false);
+      const [result, setResult] = useState(null);
+      const [maxRetries, setMaxRetries] = useState(3);
+      const [baseDelay, setBaseDelay] = useState(500);
+      const [failRate, setFailRate] = useState(0.7);
+      const [countdown, setCountdown] = useState(null);
+      const countdownRef = useRef(null);
+
+      const run = useCallback(async () => {
+        setAttempts([]);
+        setResult(null);
+        setRunning(true);
+
+        try {
+          await fetchWithRetry('https://example.com/api', {
+            maxRetries,
+            baseDelay,
+            failRate,
+            onAttempt: (info) => {
+              setAttempts(prev => {
+                const existing = prev.findIndex(a => a.attempt === info.attempt);
+                if (existing >= 0) {
+                  const next = [...prev];
+                  next[existing] = info;
+                  return next;
+                }
+                return [...prev, info];
+              });
+              if (info.delay) {
+                let remaining = info.delay / 1000;
+                clearInterval(countdownRef.current);
+                setCountdown(remaining.toFixed(1));
+                countdownRef.current = setInterval(() => {
+                  remaining -= 0.1;
+                  if (remaining <= 0) { clearInterval(countdownRef.current); setCountdown(null); }
+                  else setCountdown(remaining.toFixed(1));
+                }, 100);
+              }
+            },
+          });
+          setResult({ ok: true, msg: '✓ Request succeeded!' });
+        } catch (err) {
+          setResult({ ok: false, msg: `✕ ${err.message}` });
+        } finally {
+          setRunning(false);
+          setCountdown(null);
+          clearInterval(countdownRef.current);
+        }
+      }, [maxRetries, baseDelay, failRate]);
+
+      return (
+        <div>
+          <h1>14 — Retry-on-Failure Fetch</h1>
+          <p className="desc">Features: Exponential backoff retry, configurable retries/delay/fail-rate, live attempt timeline, visual countdown.</p>
+
+          <div className="config">
+            <h3>Configuration</h3>
+            <div className="config-row">
+              <div className="config-item">
+                <label>Max Retries</label>
+                <input type="range" min="1" max="5" value={maxRetries} onChange={e => setMaxRetries(+e.target.value)} />
+                <span className="config-val">{maxRetries}</span>
+              </div>
+              <div className="config-item">
+                <label>Base Delay (ms)</label>
+                <input type="range" min="200" max="1000" step="100" value={baseDelay} onChange={e => setBaseDelay(+e.target.value)} />
+                <span className="config-val">{baseDelay}ms → {baseDelay * 2}ms → {baseDelay * 4}ms...</span>
+              </div>
+              <div className="config-item">
+                <label>Fail Rate</label>
+                <input type="range" min="0" max="1" step="0.1" value={failRate} onChange={e => setFailRate(+e.target.value)} />
+                <span className="config-val">{Math.round(failRate * 100)}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="controls">
+            <button className="btn-primary" onClick={run} disabled={running}>
+              {running ? <><span className="spinner" />Running...</> : '▶ Run Request'}
+            </button>
+          </div>
+
+          {countdown && <p style={{ marginBottom: 12, fontSize: 13 }}>Next retry in: <span className="countdown">{countdown}s</span></p>}
+
+          <div className="timeline">
+            {attempts.map((a, i) => (
+              <div className="attempt" key={i}>
+                <div className={`attempt-num ${a.status === 'fail' || a.status === 'exhausted' ? 'fail' : a.status === 'success' ? 'success' : 'wait'}`}>
+                  {a.attempt}
+                </div>
+                <div className="attempt-info">
+                  <div className="attempt-label">
+                    {a.status === 'trying' && '⏳ Attempting...'}
+                    {a.status === 'fail' && '✕ Failed'}
+                    {a.status === 'success' && '✓ Succeeded'}
+                    {a.status === 'exhausted' && '✕ Retries exhausted'}
+                  </div>
+                  <div className="attempt-time">{a.time}</div>
+                  {a.delay && <div className="attempt-delay">Waiting {a.delay}ms before retry (×{Math.pow(2, a.attempt - 1)} backoff)</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {result && (
+            <div className={`final-status ${result.ok ? 'final-success' : 'final-error'}`}>
+              {result.msg}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

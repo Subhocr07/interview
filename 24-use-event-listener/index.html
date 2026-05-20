@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>24 - useEventListener Hook</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 740px; }
+    .card { background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #e0e0e0; }
+    .card h3 { font-size: 14px; margin-bottom: 14px; }
+    .event-display { background: #f5f5f5; border-radius: 8px; padding: 14px; font-size: 13px; font-family: monospace; min-height: 80px; }
+    .event-display .key { color: #4f46e5; font-weight: 700; font-size: 24px; }
+    .event-display .detail { color: #666; font-size: 12px; margin-top: 4px; }
+    .mouse-area { width: 100%; height: 120px; background: linear-gradient(135deg, #eef2ff, #ede9fe); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #888; cursor: crosshair; position: relative; overflow: hidden; }
+    .cursor-dot { position: absolute; width: 10px; height: 10px; background: #4f46e5; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; transition: none; }
+    .log { max-height: 150px; overflow-y: auto; }
+    .log-entry { padding: 4px 0; border-bottom: 1px solid #f5f5f5; font-size: 12px; font-family: monospace; color: #555; }
+    .log-entry:last-child { border-bottom: none; }
+    .log-time { color: #aaa; }
+    .online-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .online-dot.online { background: #10b981; }
+    .online-dot.offline { background: #ef4444; }
+    button { padding: 8px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; background: #4f46e5; color: #fff; margin-top: 10px; }
+    button:hover { background: #4338ca; }
+    .impl { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; padding: 14px; font-size: 12px; font-family: monospace; white-space: pre; line-height: 1.6; grid-column: 1 / -1; }
+    .impl .kw { color: #cba6f7; }
+    .impl .fn { color: #89b4fa; }
+    .impl .cm { color: #6c7086; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // The hook — attaches/detaches safely with cleanup
+    function useEventListener(eventName, handler, element = window, options) {
+      const savedHandler = useRef(handler);
+      useEffect(() => { savedHandler.current = handler; }, [handler]);
+
+      useEffect(() => {
+        const target = element?.current ?? element;
+        if (!target?.addEventListener) return;
+        const listener = (e) => savedHandler.current(e);
+        target.addEventListener(eventName, listener, options);
+        return () => target.removeEventListener(eventName, listener, options);
+      }, [eventName, element, options]);
+    }
+
+    function KeyboardDemo() {
+      const [lastKey, setLastKey] = useState(null);
+      const [modifiers, setModifiers] = useState('');
+
+      useEventListener('keydown', useCallback((e) => {
+        setLastKey(e.key);
+        const mods = [e.ctrlKey && 'Ctrl', e.shiftKey && 'Shift', e.altKey && 'Alt', e.metaKey && 'Meta'].filter(Boolean);
+        setModifiers(mods.join(' + '));
+      }, []));
+
+      return (
+        <div className="card">
+          <h3>⌨️ Keyboard Events (window)</h3>
+          <div className="event-display">
+            {lastKey ? (
+              <>
+                <div className="key">{lastKey === ' ' ? 'Space' : lastKey}</div>
+                <div className="detail">keyCode · {modifiers || 'no modifiers'}</div>
+              </>
+            ) : (
+              <span style={{ color: '#aaa' }}>Press any key...</span>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function MouseDemo() {
+      const [pos, setPos] = useState({ x: 0, y: 0 });
+      const [relPos, setRelPos] = useState({ x: 0, y: 0 });
+      const areaRef = useRef(null);
+
+      useEventListener('mousemove', useCallback((e) => {
+        setPos({ x: e.clientX, y: e.clientY });
+      }, []));
+
+      useEventListener('mousemove', useCallback((e) => {
+        if (!areaRef.current) return;
+        const rect = areaRef.current.getBoundingClientRect();
+        setRelPos({ x: Math.round(e.clientX - rect.left), y: Math.round(e.clientY - rect.top) });
+      }, []), areaRef);
+
+      return (
+        <div className="card">
+          <h3>🖱️ Mouse Events (element ref)</h3>
+          <div className="mouse-area" ref={areaRef}>
+            <div className="cursor-dot" style={{ left: relPos.x, top: relPos.y }} />
+            <span>Move mouse here · ({relPos.x}, {relPos.y})</span>
+          </div>
+          <div className="event-display" style={{ marginTop: 10, minHeight: 'auto', padding: 10 }}>
+            Global: ({pos.x}, {pos.y}) · Area: ({relPos.x}, {relPos.y})
+          </div>
+        </div>
+      );
+    }
+
+    function OnlineStatusDemo() {
+      const [isOnline, setIsOnline] = useState(navigator.onLine);
+      const [log, setLog] = useState([{ time: new Date().toLocaleTimeString(), msg: `Initial: ${navigator.onLine ? 'online' : 'offline'}` }]);
+
+      const addLog = useCallback((msg) => {
+        setLog(prev => [{ time: new Date().toLocaleTimeString(), msg }, ...prev].slice(0, 10));
+      }, []);
+
+      useEventListener('online', useCallback(() => { setIsOnline(true); addLog('Connection restored'); }, [addLog]));
+      useEventListener('offline', useCallback(() => { setIsOnline(false); addLog('Connection lost'); }, [addLog]));
+
+      return (
+        <div className="card">
+          <h3>🌐 Online/Offline Events (window)</h3>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10, fontSize: 14 }}>
+            <span className={`online-dot ${isOnline ? 'online' : 'offline'}`} />
+            <strong>{isOnline ? 'Online' : 'Offline'}</strong>
+          </div>
+          <div className="log">
+            {log.map((e, i) => (
+              <div key={i} className="log-entry">
+                <span className="log-time">[{e.time}]</span> {e.msg}
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 12, color: '#888', marginTop: 8 }}>Disable your network adapter or use DevTools to simulate offline.</p>
+        </div>
+      );
+    }
+
+    function ResizeDemo() {
+      const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+      const [resizeCount, setResizeCount] = useState(0);
+
+      useEventListener('resize', useCallback(() => {
+        setSize({ w: window.innerWidth, h: window.innerHeight });
+        setResizeCount(c => c + 1);
+      }, []));
+
+      return (
+        <div className="card">
+          <h3>📐 Resize Events (window)</h3>
+          <div className="event-display">
+            <div className="key" style={{ fontSize: 20 }}>{size.w} × {size.h}</div>
+            <div className="detail">window resize events: {resizeCount}</div>
+          </div>
+          <p style={{ fontSize: 12, color: '#888', marginTop: 8 }}>Resize the browser window to see updates.</p>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>24 — useEventListener Hook</h1>
+          <p className="desc">Features: Stable handler ref pattern, auto cleanup on unmount, works with window, document, or any element ref. Zero memory leaks.</p>
+          <div className="grid">
+            <KeyboardDemo />
+            <MouseDemo />
+            <OnlineStatusDemo />
+            <ResizeDemo />
+            <div className="impl">{`<span class="kw">function</span> <span class="fn">useEventListener</span>(eventName, handler, element = window, options) {
+  <span class="kw">const</span> savedHandler = useRef(handler);
+  useEffect(() => { savedHandler.current = handler; }, [handler]);
+  <span class="cm">// ↑ keep ref in sync so we never re-attach for handler identity changes</span>
+
+  useEffect(() => {
+    <span class="kw">const</span> target = element?.current ?? element; <span class="cm">// supports refs AND DOM nodes</span>
+    <span class="kw">if</span> (!target?.addEventListener) <span class="kw">return</span>;
+    <span class="kw">const</span> listener = (e) => savedHandler.current(e);
+    target.addEventListener(eventName, listener, options);
+    <span class="kw">return</span> () => target.removeEventListener(eventName, listener, options); <span class="cm">// cleanup!</span>
+  }, [eventName, element, options]); <span class="cm">// only re-attach if target or event changes</span>
+}`}</div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>01 - Modal with Portal</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    button { padding: 10px 20px; cursor: pointer; border-radius: 6px; border: none; background: #4f46e5; color: #fff; font-size: 15px; }
+    button:hover { background: #4338ca; }
+    .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .modal { background: #fff; border-radius: 10px; padding: 32px; min-width: 360px; max-width: 90vw; position: relative; box-shadow: 0 20px 60px rgba(0,0,0,0.3); outline: none; }
+    .modal h2 { margin-bottom: 12px; font-size: 20px; }
+    .modal p { color: #555; line-height: 1.6; margin-bottom: 24px; }
+    .close-btn { position: absolute; top: 12px; right: 14px; background: none; color: #666; font-size: 20px; padding: 4px 8px; }
+    .close-btn:hover { background: #f0f0f0; color: #000; }
+    .modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
+    .cancel-btn { background: #e5e7eb; color: #333; }
+    .cancel-btn:hover { background: #d1d5db; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="modal-root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    function Modal({ isOpen, onClose, title, children }) {
+      const modalRef = useRef(null);
+
+      // Esc key to close
+      useEffect(() => {
+        if (!isOpen) return;
+        const handleKey = (e) => {
+          if (e.key === 'Escape') onClose();
+          if (e.key === 'Tab') trapFocus(e);
+        };
+        document.addEventListener('keydown', handleKey);
+        modalRef.current?.focus();
+        return () => document.removeEventListener('keydown', handleKey);
+      }, [isOpen, onClose]);
+
+      // Prevent body scroll when open
+      useEffect(() => {
+        document.body.style.overflow = isOpen ? 'hidden' : '';
+        return () => { document.body.style.overflow = ''; };
+      }, [isOpen]);
+
+      function trapFocus(e) {
+        const focusable = modalRef.current?.querySelectorAll(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (!focusable?.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+          if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+        } else {
+          if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+      }
+
+      if (!isOpen) return null;
+
+      return ReactDOM.createPortal(
+        <div className="backdrop" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <div className="modal" ref={modalRef} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+            <button className="close-btn" onClick={onClose} aria-label="Close modal">✕</button>
+            <h2 id="modal-title">{title}</h2>
+            {children}
+          </div>
+        </div>,
+        document.getElementById('modal-root')
+      );
+    }
+
+    function App() {
+      const [isOpen, setIsOpen] = useState(false);
+
+      return (
+        <div>
+          <h1 style={{ marginBottom: 8 }}>01 — Modal with Portal</h1>
+          <p style={{ color: '#666', marginBottom: 24 }}>
+            Features: React Portal, Esc to close, backdrop click, keyboard trap (Tab), body scroll lock, ARIA roles.
+          </p>
+          <button onClick={() => setIsOpen(true)}>Open Modal</button>
+
+          <Modal isOpen={isOpen} onClose={() => setIsOpen(false)} title="Confirm Action">
+            <p>This modal renders in a portal outside the main React tree. Press Esc or click the backdrop to close. Tab key is trapped inside.</p>
+            <div className="modal-footer">
+              <button className="cancel-btn" onClick={() => setIsOpen(false)}>Cancel</button>
+              <button onClick={() => { alert('Confirmed!'); setIsOpen(false); }}>Confirm</button>
+            </div>
+          </Modal>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

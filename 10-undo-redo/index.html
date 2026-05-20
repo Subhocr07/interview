@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>10 - Undo/Redo</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .editor { width: 580px; background: #fff; border-radius: 10px; padding: 24px; border: 1px solid #e0e0e0; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; }
+    .tb-btn { padding: 7px 14px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 5px; }
+    .tb-btn:hover:not(:disabled) { background: #f0f0f0; }
+    .tb-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .tb-btn.danger { color: #dc2626; border-color: #fca5a5; }
+    .tb-btn.danger:hover:not(:disabled) { background: #fef2f2; }
+    .history-count { font-size: 12px; color: #888; margin-left: auto; }
+    textarea { width: 100%; height: 180px; padding: 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; font-family: inherit; resize: vertical; line-height: 1.6; }
+    textarea:focus { outline: 2px solid #4f46e5; border-color: transparent; }
+    .history-panel { margin-top: 20px; }
+    .history-panel h3 { font-size: 13px; color: #888; margin-bottom: 10px; text-transform: uppercase; letter-spacing: .05em; }
+    .history-list { display: flex; flex-direction: column; gap: 4px; max-height: 200px; overflow-y: auto; }
+    .history-entry { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 6px; font-size: 13px; }
+    .history-entry.current { background: #eef2ff; border: 1px solid #c7d2fe; }
+    .history-entry.past { color: #888; }
+    .history-entry.future { color: #bbb; font-style: italic; }
+    .he-index { width: 24px; height: 24px; border-radius: 50%; background: #e0e0e0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+    .history-entry.current .he-index { background: #4f46e5; color: #fff; }
+    .he-preview { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .he-label { font-size: 11px; color: #4f46e5; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useReducer, useEffect, useCallback } = React;
+
+    function undoableReducer(state, action) {
+      const { past, present, future } = state;
+      switch (action.type) {
+        case 'SET':
+          if (action.value === present) return state;
+          return { past: [...past, present], present: action.value, future: [] };
+        case 'UNDO':
+          if (!past.length) return state;
+          return { past: past.slice(0, -1), present: past[past.length - 1], future: [present, ...future] };
+        case 'REDO':
+          if (!future.length) return state;
+          return { past: [...past, present], present: future[0], future: future.slice(1) };
+        case 'RESET':
+          return { past: [], present: '', future: [] };
+        default:
+          return state;
+      }
+    }
+
+    function UndoRedoEditor() {
+      const [state, dispatch] = useReducer(undoableReducer, { past: [], present: 'Start typing here to see the undo/redo history in action!\n\nTry typing, then pressing Ctrl+Z to undo...', future: [] });
+
+      const canUndo = state.past.length > 0;
+      const canRedo = state.future.length > 0;
+
+      // Keyboard shortcuts
+      useEffect(() => {
+        function handleKey(e) {
+          if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            e.preventDefault();
+            if (e.shiftKey) dispatch({ type: 'REDO' });
+            else dispatch({ type: 'UNDO' });
+          }
+          if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+            e.preventDefault();
+            dispatch({ type: 'REDO' });
+          }
+        }
+        document.addEventListener('keydown', handleKey);
+        return () => document.removeEventListener('keydown', handleKey);
+      }, []);
+
+      // Debounce textarea changes to history (every 500ms of inactivity)
+      const debounceRef = React.useRef(null);
+      function handleChange(e) {
+        const value = e.target.value;
+        clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+          dispatch({ type: 'SET', value });
+        }, 500);
+        // Immediate visual update without adding to history every keystroke
+        e.target.value = value; // controlled via textarea value
+        dispatch({ type: 'SET', value }); // simplified: add each change
+      }
+
+      const allHistory = [...state.past, state.present, ...state.future];
+      const currentIndex = state.past.length;
+
+      return (
+        <div className="editor">
+          <div className="toolbar">
+            <button className="tb-btn" onClick={() => dispatch({ type: 'UNDO' })} disabled={!canUndo} title="Ctrl+Z">
+              ↩ Undo
+            </button>
+            <button className="tb-btn" onClick={() => dispatch({ type: 'REDO' })} disabled={!canRedo} title="Ctrl+Y">
+              ↪ Redo
+            </button>
+            <button className="tb-btn danger" onClick={() => dispatch({ type: 'RESET' })}>
+              ✕ Reset
+            </button>
+            <span className="history-count">{state.past.length} past · {state.future.length} future</span>
+          </div>
+
+          <textarea
+            value={state.present}
+            onChange={e => dispatch({ type: 'SET', value: e.target.value })}
+          />
+          <p style={{ fontSize: 12, color: '#aaa', marginTop: 6 }}>Keyboard: Ctrl+Z (undo) · Ctrl+Y / Ctrl+Shift+Z (redo)</p>
+
+          <div className="history-panel">
+            <h3>History Stack ({allHistory.length} states)</h3>
+            <div className="history-list">
+              {allHistory.map((text, i) => (
+                <div
+                  key={i}
+                  className={`history-entry ${i === currentIndex ? 'current' : i < currentIndex ? 'past' : 'future'}`}
+                >
+                  <div className="he-index">{i}</div>
+                  <div className="he-preview">"{text.slice(0, 60).replace(/\n/g, '↵')}{text.length > 60 ? '...' : ''}"</div>
+                  {i === currentIndex && <span className="he-label">CURRENT</span>}
+                  {i > currentIndex && <span style={{ fontSize: 11, color: '#bbb' }}>FUTURE</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>10 — Undo / Redo</h1>
+          <p className="desc">Features: State history stack with past/present/future, Ctrl+Z/Y keyboard shortcuts, visual history panel.</p>
+          <UndoRedoEditor />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

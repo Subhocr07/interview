@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>03 - Tabs</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .tabs-wrapper { width: 560px; }
+    .tab-list { display: flex; border-bottom: 2px solid #e0e0e0; }
+    .tab-btn { padding: 10px 20px; border: none; background: none; cursor: pointer; font-size: 14px; font-weight: 500; color: #666; position: relative; outline: none; border-radius: 4px 4px 0 0; }
+    .tab-btn:hover { background: #f0f0f0; color: #333; }
+    .tab-btn.active { color: #4f46e5; }
+    .tab-btn.active::after { content: ''; position: absolute; bottom: -2px; left: 0; right: 0; height: 2px; background: #4f46e5; }
+    .tab-btn:focus-visible { outline: 2px solid #4f46e5; outline-offset: -2px; }
+    .tab-panel { background: #fff; border: 1px solid #e0e0e0; border-top: none; padding: 24px; border-radius: 0 0 8px 8px; min-height: 120px; }
+    .tab-panel h3 { margin-bottom: 10px; }
+    .tab-panel p { color: #555; line-height: 1.6; font-size: 14px; }
+    .lazy-badge { display: inline-block; background: #d1fae5; color: #065f46; font-size: 11px; padding: 2px 8px; border-radius: 20px; margin-left: 8px; }
+    .controls { margin-top: 20px; display: flex; gap: 12px; }
+    label { font-size: 14px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useCallback } = React;
+
+    const tabData = [
+      { id: 'overview', label: 'Overview', content: { h: 'Overview', p: 'This is the Overview tab. It loads immediately when the component mounts.' } },
+      { id: 'details', label: 'Details', content: { h: 'Details', p: 'This is the Details tab. With lazy rendering enabled, this content only renders after you first click this tab.' } },
+      { id: 'settings', label: 'Settings', content: { h: 'Settings', p: 'This is the Settings tab. Keyboard navigation: use Arrow Left/Right to switch tabs, Home/End to jump to first/last.' } },
+      { id: 'history', label: 'History', content: { h: 'History', p: 'This is the History tab. Each panel is mounted lazily and kept in the DOM (hidden) once visited, to avoid losing state.' } },
+    ];
+
+    function Tabs({ tabs, lazy = false }) {
+      const [activeId, setActiveId] = useState(tabs[0].id);
+      const [visited, setVisited] = useState(new Set([tabs[0].id]));
+      const tabRefs = useRef([]);
+
+      function activate(id, index) {
+        setActiveId(id);
+        setVisited(prev => new Set([...prev, id]));
+        tabRefs.current[index]?.focus();
+      }
+
+      function handleKeyDown(e, index) {
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          const next = (index + 1) % tabs.length;
+          activate(tabs[next].id, next);
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          const prev = (index - 1 + tabs.length) % tabs.length;
+          activate(tabs[prev].id, prev);
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          activate(tabs[0].id, 0);
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          activate(tabs[tabs.length - 1].id, tabs.length - 1);
+        }
+      }
+
+      return (
+        <div className="tabs-wrapper">
+          <div className="tab-list" role="tablist">
+            {tabs.map((tab, i) => (
+              <button
+                key={tab.id}
+                role="tab"
+                className={`tab-btn ${activeId === tab.id ? 'active' : ''}`}
+                aria-selected={activeId === tab.id}
+                aria-controls={`panel-${tab.id}`}
+                id={`tab-${tab.id}`}
+                tabIndex={activeId === tab.id ? 0 : -1}
+                ref={el => tabRefs.current[i] = el}
+                onClick={() => activate(tab.id, i)}
+                onKeyDown={(e) => handleKeyDown(e, i)}
+              >
+                {tab.label}
+                {lazy && !visited.has(tab.id) && <span className="lazy-badge">lazy</span>}
+              </button>
+            ))}
+          </div>
+
+          {tabs.map(tab => {
+            const shouldRender = !lazy || visited.has(tab.id);
+            return (
+              <div
+                key={tab.id}
+                id={`panel-${tab.id}`}
+                role="tabpanel"
+                aria-labelledby={`tab-${tab.id}`}
+                className="tab-panel"
+                hidden={activeId !== tab.id}
+              >
+                {shouldRender && (
+                  <>
+                    <h3>{tab.content.h}</h3>
+                    <p>{tab.content.p}</p>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    function App() {
+      const [lazy, setLazy] = useState(false);
+      return (
+        <div>
+          <h1>03 — Tabs</h1>
+          <p className="desc">Features: Arrow key navigation, Home/End keys, lazy rendering, ARIA roles (tablist/tab/tabpanel), roving tabindex.</p>
+          <div className="controls" style={{ marginBottom: 20 }}>
+            <label>
+              <input type="checkbox" checked={lazy} onChange={e => setLazy(e.target.checked)} />
+              Enable lazy rendering (panels not rendered until first visit)
+            </label>
+          </div>
+          <Tabs tabs={tabData} lazy={lazy} />
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>19 - Star Rating</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .demos { display: flex; flex-direction: column; gap: 28px; max-width: 520px; }
+    .demo-card { background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #e0e0e0; }
+    .demo-card h3 { font-size: 13px; color: #888; text-transform: uppercase; margin-bottom: 14px; letter-spacing: .05em; }
+    .stars { display: flex; gap: 4px; }
+    .star { font-size: 32px; cursor: pointer; transition: transform 0.1s; position: relative; display: inline-block; line-height: 1; }
+    .star:hover { transform: scale(1.15); }
+    .star.readonly { cursor: default; }
+    .star.readonly:hover { transform: none; }
+    .star-label { margin-left: 12px; font-size: 16px; font-weight: 600; color: #4f46e5; vertical-align: middle; }
+    .rating-text { margin-top: 8px; font-size: 13px; color: #888; }
+    .product-card { display: flex; gap: 16px; align-items: center; }
+    .product-img { width: 60px; height: 60px; border-radius: 8px; object-fit: cover; background: #e0e0e0; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+    .product-info h4 { font-size: 15px; margin-bottom: 4px; }
+    .review-count { font-size: 12px; color: #888; margin-left: 8px; }
+    .half-star-wrap { position: relative; display: inline-block; font-size: 32px; line-height: 1; }
+    .half-star-left { position: absolute; left: 0; top: 0; width: 50%; overflow: hidden; }
+    .half-star-full { display: block; }
+    .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    button { padding: 6px 14px; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; font-size: 12px; background: #fff; }
+    button:hover { background: #f0f0f0; }
+    button.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState } = React;
+
+    const LABELS = ['', 'Terrible', 'Poor', 'Average', 'Good', 'Excellent'];
+
+    function StarRating({ value, onChange, readonly = false, size = 32, total = 5, allowHalf = false }) {
+      const [hovered, setHovered] = useState(null);
+      const display = hovered !== null ? hovered : value;
+
+      function handleClick(star, half) {
+        if (readonly || !onChange) return;
+        const newVal = allowHalf && half ? star - 0.5 : star;
+        onChange(newVal === value ? 0 : newVal);
+      }
+
+      function handleMouseMove(e, star) {
+        if (readonly) return;
+        if (allowHalf) {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const half = e.clientX - rect.left < rect.width / 2;
+          setHovered(half ? star - 0.5 : star);
+        } else {
+          setHovered(star);
+        }
+      }
+
+      function renderStar(i) {
+        const starNum = i + 1;
+        const filled = display >= starNum;
+        const halfFilled = !filled && display >= starNum - 0.5;
+
+        if (halfFilled) {
+          return (
+            <span
+              key={i}
+              className={`star${readonly ? ' readonly' : ''}`}
+              style={{ fontSize: size, lineHeight: 1, position: 'relative', display: 'inline-block' }}
+              onClick={(e) => { const rect = e.currentTarget.getBoundingClientRect(); handleClick(starNum, e.clientX - rect.left < rect.width / 2); }}
+              onMouseMove={e => handleMouseMove(e, starNum)}
+              onMouseLeave={() => !readonly && setHovered(null)}
+              aria-label={`${starNum} stars`}
+            >
+              <span style={{ color: '#e5e7eb' }}>★</span>
+              <span style={{ position: 'absolute', left: 0, top: 0, width: '50%', overflow: 'hidden', color: '#f59e0b' }}>★</span>
+            </span>
+          );
+        }
+
+        return (
+          <span
+            key={i}
+            className={`star${readonly ? ' readonly' : ''}`}
+            style={{ fontSize: size, color: filled ? '#f59e0b' : '#e5e7eb', lineHeight: 1 }}
+            onClick={(e) => { const rect = e.currentTarget.getBoundingClientRect(); handleClick(starNum, e.clientX - rect.left < rect.width / 2); }}
+            onMouseMove={e => handleMouseMove(e, starNum)}
+            onMouseLeave={() => !readonly && setHovered(null)}
+            aria-label={`${starNum} stars`}
+            role={readonly ? undefined : 'button'}
+          >
+            ★
+          </span>
+        );
+      }
+
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+          <div className="stars" onMouseLeave={() => !readonly && setHovered(null)} role={readonly ? undefined : 'radiogroup'}>
+            {Array.from({ length: total }, (_, i) => renderStar(i))}
+          </div>
+        </div>
+      );
+    }
+
+    const PRODUCTS = [
+      { id: 1, name: 'Wireless Headphones', emoji: '🎧', rating: 4.5, reviews: 1234 },
+      { id: 2, name: 'Mechanical Keyboard', emoji: '⌨️', rating: 3.5, reviews: 567 },
+      { id: 3, name: 'LED Desk Lamp', emoji: '💡', rating: 5, reviews: 89 },
+    ];
+
+    function App() {
+      const [rating, setRating] = useState(0);
+      const [halfRating, setHalfRating] = useState(3.5);
+      const [sizes, setSizes] = useState([24, 32, 40]);
+
+      return (
+        <div>
+          <h1>19 — Star Rating</h1>
+          <p className="desc">Features: Hover preview, click to rate, half-star support, read-only mode, keyboard accessible, configurable size.</p>
+
+          <div className="demos">
+            <div className="demo-card">
+              <h3>Interactive — Whole Stars</h3>
+              <StarRating value={rating} onChange={setRating} />
+              {rating > 0 && <p className="rating-text">{LABELS[rating]} — {rating}/5 stars</p>}
+              {rating === 0 && <p className="rating-text">Click to rate</p>}
+            </div>
+
+            <div className="demo-card">
+              <h3>Interactive — Half Stars</h3>
+              <StarRating value={halfRating} onChange={setHalfRating} allowHalf />
+              <p className="rating-text">{halfRating}/5 stars</p>
+            </div>
+
+            <div className="demo-card">
+              <h3>Read-only (Product Ratings)</h3>
+              {PRODUCTS.map(p => (
+                <div key={p.id} className="product-card" style={{ marginBottom: 14 }}>
+                  <div className="product-img">{p.emoji}</div>
+                  <div className="product-info">
+                    <h4>{p.name}</h4>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <StarRating value={p.rating} readonly allowHalf size={20} />
+                      <span className="review-count">({p.reviews.toLocaleString()} reviews)</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="demo-card">
+              <h3>Different Sizes</h3>
+              {[16, 24, 32, 40].map(s => (
+                <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: '#888', width: 40 }}>{s}px</span>
+                  <StarRating value={3} readonly size={s} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

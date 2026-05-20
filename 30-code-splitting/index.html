@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>30 - Code Splitting Strategy</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #f5f5f5; }
+    h1 { margin-bottom: 8px; }
+    p.desc { color: #666; margin-bottom: 24px; }
+    .dashboard { display: grid; grid-template-columns: 200px 1fr; gap: 16px; max-width: 860px; }
+    .sidebar { background: #fff; border-radius: 10px; padding: 16px; border: 1px solid #e0e0e0; height: fit-content; }
+    .sidebar h3 { font-size: 12px; color: #888; text-transform: uppercase; margin-bottom: 10px; }
+    .nav-item { padding: 9px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    .nav-item:hover { background: #f5f5f5; }
+    .nav-item.active { background: #eef2ff; color: #4f46e5; font-weight: 500; }
+    .nav-item .size { margin-left: auto; font-size: 10px; color: #aaa; background: #f0f0f0; padding: 1px 6px; border-radius: 20px; }
+    .nav-item.active .size { background: #c7d2fe; color: #4f46e5; }
+    .content { background: #fff; border-radius: 10px; padding: 24px; border: 1px solid #e0e0e0; min-height: 400px; }
+    .skeleton { background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%); background-size: 200% 100%; animation: shimmer 1.2s infinite; border-radius: 6px; }
+    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+    .sk-title { height: 24px; width: 200px; margin-bottom: 16px; }
+    .sk-line { height: 14px; margin-bottom: 10px; border-radius: 4px; }
+    .chart-bars { display: flex; align-items: flex-end; gap: 8px; height: 150px; padding: 0 0 10px; }
+    .bar-group { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; }
+    .bar { width: 100%; border-radius: 4px 4px 0 0; transition: height 0.5s; }
+    .bar-label { font-size: 11px; color: #888; }
+    .map-area { background: linear-gradient(135deg, #dbeafe, #ede9fe); border-radius: 8px; height: 200px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #4f46e5; position: relative; }
+    .map-pin { position: absolute; font-size: 20px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f9fafb; padding: 8px 12px; text-align: left; font-weight: 600; border-bottom: 1px solid #e0e0e0; }
+    td { padding: 8px 12px; border-bottom: 1px solid #f5f5f5; }
+    .bundle-tracker { background: #1e1e2e; color: #cdd6f4; border-radius: 10px; padding: 20px; margin-top: 16px; max-width: 860px; }
+    .bundle-tracker h3 { color: #89b4fa; font-size: 14px; margin-bottom: 12px; }
+    .bundle-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #313244; font-size: 12px; font-family: monospace; }
+    .bundle-row:last-child { border-bottom: none; }
+    .bname { color: #cba6f7; }
+    .bsize { color: #f9e2af; }
+    .bstatus { }
+    .bstatus.loaded { color: #a6e3a1; }
+    .bstatus.not-loaded { color: #6c7086; }
+    .bstatus.loading { color: #89b4fa; }
+    .total-size { margin-top: 10px; font-size: 12px; color: #cdd6f4; font-family: monospace; }
+    .total-size strong { color: #a6e3a1; }
+    .strategy-note { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 14px; font-size: 13px; color: #92400e; margin-top: 16px; max-width: 860px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, Suspense } = React;
+
+    // Simulated lazy-loaded "heavy" modules with fake bundle sizes
+    const modules = {
+      overview: { name: 'Overview', icon: '🏠', size: '12kb', delay: 0 },
+      charts: { name: 'Analytics Charts', icon: '📊', size: '180kb', delay: 1200, heavy: true },
+      map: { name: 'Geo Map', icon: '🗺️', size: '240kb', delay: 1800, heavy: true },
+      reports: { name: 'Reports Table', icon: '📋', size: '65kb', delay: 600 },
+      settings: { name: 'Settings', icon: '⚙️', size: '30kb', delay: 200 },
+    };
+
+    // Simulate module registry
+    const loadedModules = new Set(['overview']);
+    const loadingModules = new Set();
+    const loadListeners = new Map();
+
+    function simulateLoad(moduleId, delay) {
+      return new Promise(resolve => setTimeout(() => {
+        loadedModules.add(moduleId);
+        loadingModules.delete(moduleId);
+        resolve();
+      }, delay));
+    }
+
+    function loadModule(moduleId) {
+      if (loadedModules.has(moduleId)) return Promise.resolve();
+      if (loadingModules.has(moduleId)) return new Promise(r => {
+        const existing = loadListeners.get(moduleId) || [];
+        loadListeners.set(moduleId, [...existing, r]);
+      });
+      loadingModules.add(moduleId);
+      return simulateLoad(moduleId, modules[moduleId].delay).then(() => {
+        (loadListeners.get(moduleId) || []).forEach(fn => fn());
+        loadListeners.delete(moduleId);
+      });
+    }
+
+    // Panel components
+    function OverviewPanel() {
+      return (
+        <div>
+          <h2 style={{ marginBottom: 12 }}>🏠 Overview</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 20 }}>
+            {[{ label: 'Users', val: '12,489', delta: '+8%' }, { label: 'Revenue', val: '$48k', delta: '+12%' }, { label: 'Orders', val: '3,891', delta: '+5%' }].map(s => (
+              <div key={s.label} style={{ background: '#f9fafb', borderRadius: 8, padding: 14 }}>
+                <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>{s.label}</div>
+                <div style={{ fontSize: 22, fontWeight: 700 }}>{s.val}</div>
+                <div style={{ fontSize: 12, color: '#059669' }}>{s.delta} vs last month</div>
+              </div>
+            ))}
+          </div>
+          <p style={{ color: '#888', fontSize: 13 }}>Overview loads instantly (12kb). Other panels are lazy-loaded on first visit — click them to see the loading simulation.</p>
+        </div>
+      );
+    }
+
+    function ChartsPanel() {
+      const data = [['Jan',65],['Feb',78],['Mar',90],['Apr',72],['May',88],['Jun',95]];
+      const maxVal = Math.max(...data.map(d => d[1]));
+      const colors = ['#4f46e5','#7c3aed','#059669','#d97706','#dc2626','#0891b2'];
+      return (
+        <div>
+          <h2 style={{ marginBottom: 16 }}>📊 Analytics Charts <span style={{ fontSize: 13, color: '#4f46e5', fontWeight: 400 }}>(180kb — heavy chart library)</span></h2>
+          <div className="chart-bars">
+            {data.map(([label, val], i) => (
+              <div className="bar-group" key={label}>
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>{val}</div>
+                <div className="bar" style={{ height: `${(val / maxVal) * 120}px`, background: colors[i] }} />
+                <div className="bar-label">{label}</div>
+              </div>
+            ))}
+          </div>
+          <p style={{ color: '#888', fontSize: 13, marginTop: 12 }}>This heavy chart component was only downloaded when you navigated here. Saves 180kb on initial load for users who never visit this tab.</p>
+        </div>
+      );
+    }
+
+    function MapPanel() {
+      const pins = [[30, 40], [60, 55], [45, 75], [70, 30], [20, 65]];
+      return (
+        <div>
+          <h2 style={{ marginBottom: 16 }}>🗺️ Geo Map <span style={{ fontSize: 13, color: '#4f46e5', fontWeight: 400 }}>(240kb — largest chunk)</span></h2>
+          <div className="map-area">
+            🗺 Interactive Map
+            {pins.map(([top, left], i) => (
+              <div key={i} className="map-pin" style={{ top: `${top}%`, left: `${left}%` }}>📍</div>
+            ))}
+          </div>
+          <p style={{ color: '#888', fontSize: 13, marginTop: 12 }}>The 240kb map library only loads when this panel is first visited. Critical for mobile users on slow connections.</p>
+        </div>
+      );
+    }
+
+    function ReportsPanel() {
+      const rows = Array.from({ length: 8 }, (_, i) => ({ id: i + 1, name: `Report ${i + 1}`, date: '2026-05-0' + (i + 1), status: i % 3 === 0 ? 'Pending' : 'Done', size: `${(i + 1) * 124}kb` }));
+      return (
+        <div>
+          <h2 style={{ marginBottom: 16 }}>📋 Reports</h2>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Name</th><th>Date</th><th>Status</th><th>Size</th></tr></thead>
+              <tbody>{rows.map(r => <tr key={r.id}><td>{r.id}</td><td>{r.name}</td><td>{r.date}</td><td>{r.status}</td><td>{r.size}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function SettingsPanel() {
+      const [vals, setVals] = useState({ theme: 'light', lang: 'en', notify: true });
+      return (
+        <div>
+          <h2 style={{ marginBottom: 16 }}>⚙️ Settings</h2>
+          {[['Theme', 'theme', ['light','dark']],['Language','lang',['en','fr','de','ja']]].map(([label,key,opts]) => (
+            <div key={key} style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 6 }}>{label}</label>
+              <select value={vals[key]} onChange={e => setVals(v => ({ ...v, [key]: e.target.value }))} style={{ padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}>
+                {opts.map(o => <option key={o}>{o}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    const PANELS = { overview: OverviewPanel, charts: ChartsPanel, map: MapPanel, reports: ReportsPanel, settings: SettingsPanel };
+
+    function SkeletonLoader() {
+      return (
+        <div>
+          <div className="skeleton sk-title" />
+          {[80, 65, 90, 55, 75].map((w, i) => (
+            <div key={i} className="skeleton sk-line" style={{ width: `${w}%` }} />
+          ))}
+        </div>
+      );
+    }
+
+    function App() {
+      const [active, setActive] = useState('overview');
+      const [panelState, setPanelState] = useState({ overview: 'loaded' });
+
+      async function navigate(id) {
+        setActive(id);
+        if (!loadedModules.has(id) && !loadingModules.has(id)) {
+          setPanelState(s => ({ ...s, [id]: 'loading' }));
+          await loadModule(id);
+          setPanelState(s => ({ ...s, [id]: 'loaded' }));
+        }
+      }
+
+      const Panel = PANELS[active];
+      const isLoading = panelState[active] !== 'loaded';
+      const totalLoaded = Object.entries(modules).filter(([id]) => loadedModules.has(id)).reduce((sum, [, m]) => sum + parseInt(m.size), 0);
+      const totalAll = Object.values(modules).reduce((sum, m) => sum + parseInt(m.size), 0);
+
+      return (
+        <div>
+          <h1>30 — Code Splitting Strategy</h1>
+          <p className="desc">Features: Route-based + component-based lazy loading. Heavy modules only load when visited. Simulates real bundle sizes.</p>
+
+          <div className="dashboard">
+            <div className="sidebar">
+              <h3>Dashboard</h3>
+              {Object.entries(modules).map(([id, mod]) => (
+                <div key={id} className={`nav-item ${active === id ? 'active' : ''}`} onClick={() => navigate(id)}>
+                  {mod.icon} {mod.name}
+                  <span className="size">{mod.size}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="content">
+              {isLoading ? <SkeletonLoader /> : <Panel />}
+            </div>
+          </div>
+
+          <div className="bundle-tracker">
+            <h3>📦 Bundle Download Tracker</h3>
+            {Object.entries(modules).map(([id, mod]) => {
+              const status = loadedModules.has(id) ? 'loaded' : loadingModules.has(id) ? 'loading' : 'not-loaded';
+              return (
+                <div className="bundle-row" key={id}>
+                  <span className="bname">chunk.{id}.js</span>
+                  <span className="bsize">{mod.size}</span>
+                  <span className={`bstatus ${status}`}>
+                    {status === 'loaded' ? '✓ downloaded' : status === 'loading' ? '↻ downloading...' : '○ not loaded'}
+                  </span>
+                </div>
+              );
+            })}
+            <div className="total-size">
+              Downloaded: <strong>{totalLoaded}kb / {totalAll}kb</strong> — saved {totalAll - totalLoaded}kb on initial load ({Math.round((1 - totalLoaded/totalAll) * 100)}% reduction)
+            </div>
+          </div>
+
+          <div className="strategy-note">
+            <strong>Code Splitting Strategies:</strong><br/>
+            1. <strong>Route-based</strong> (shown here) — each page/route is its own chunk, lazily imported.<br/>
+            2. <strong>Component-based</strong> — heavy components (modals, charts) wrapped in <code>React.lazy()</code>.<br/>
+            3. <strong>Preloading</strong> — prefetch chunks on hover before the user clicks.<br/>
+            4. <strong>Vendor splitting</strong> — separate node_modules from app code for better caching.<br/>
+            Tooling: Vite / Webpack handle <code>import()</code> as a split point automatically.
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
