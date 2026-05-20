@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>03 - Keys & Reconciliation</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; }
+    .panel.bad { border-top: 3px solid #f85149; }
+    .panel.good { border-top: 3px solid #3fb950; }
+    .panel h2 { font-size: 14px; margin-bottom: 14px; }
+    .panel.bad h2 { color: #f85149; }
+    .panel.good h2 { color: #3fb950; }
+    .item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #111; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
+    .item input { width: 120px; padding: 4px 8px; background: #222; border: 1px solid #444; border-radius: 4px; color: #cdd6f4; font-size: 12px; }
+    .item .color-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .render-count { font-size: 10px; background: #333; padding: 1px 6px; border-radius: 10px; color: #888; }
+    .render-count.high { color: #f85149; background: rgba(248,81,73,0.15); }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 8px; margin-bottom: 10px; }
+    button:hover { background: #30363d; }
+    button.danger { border-color: #f85149; color: #f85149; }
+    button.success { border-color: #3fb950; color: #3fb950; }
+    .ops-log { background: #0d1117; border-radius: 6px; padding: 10px; max-height: 160px; overflow-y: auto; font-size: 11px; font-family: monospace; margin-top: 10px; }
+    .log-entry { padding: 2px 0; }
+    .log-entry.mount { color: #3fb950; }
+    .log-entry.update { color: #e3b341; }
+    .log-entry.unmount { color: #f85149; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; grid-column: 1 / -1; }
+    .explain code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .hl { color: #f9e2af; }
+    .section-title { font-size: 11px; text-transform: uppercase; color: #888; letter-spacing: .05em; margin-bottom: 8px; }
+    .key-demo { background: #111; border-radius: 8px; padding: 14px; margin-top: 10px; font-family: monospace; font-size: 12px; }
+    .bad-key { color: #f85149; }
+    .good-key { color: #3fb950; }
+    .neutral { color: #888; }
+    .key-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+    .key-table th { background: #1a1a1a; padding: 6px 10px; text-align: left; color: #888; font-weight: 600; border-bottom: 1px solid #333; }
+    .key-table td { padding: 6px 10px; border-bottom: 1px solid #222; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#a855f7'];
+    const INITIAL = [
+      { id: 1, name: 'Alice', color: COLORS[0] },
+      { id: 2, name: 'Bob',   color: COLORS[1] },
+      { id: 3, name: 'Carol', color: COLORS[2] },
+    ];
+
+    let mountCount = { noKey: 0, withKey: 0 };
+
+    function ItemNoKey({ name, color }) {
+      const [note, setNote] = useState('');
+      const renderRef = useRef(0);
+      renderRef.current++;
+      useEffect(() => {
+        mountCount.noKey++;
+      }, []);
+      return (
+        <div className="item">
+          <div className="color-dot" style={{ background: color }} />
+          <span style={{ flex: 1, fontSize: 13 }}>{name}</span>
+          <input value={note} onChange={e => setNote(e.target.value)} placeholder="type a note..." />
+          <span className={`render-count ${renderRef.current > 1 ? 'high' : ''}`}>renders: {renderRef.current}</span>
+        </div>
+      );
+    }
+
+    function ItemWithKey({ name, color, id }) {
+      const [note, setNote] = useState('');
+      const renderRef = useRef(0);
+      renderRef.current++;
+      useEffect(() => {
+        mountCount.withKey++;
+      }, []);
+      return (
+        <div className="item">
+          <div className="color-dot" style={{ background: color }} />
+          <span style={{ flex: 1, fontSize: 13 }}>{name}</span>
+          <input value={note} onChange={e => setNote(e.target.value)} placeholder="type a note..." />
+          <span className={`render-count ${renderRef.current > 1 ? 'high' : ''}`}>renders: {renderRef.current}</span>
+        </div>
+      );
+    }
+
+    function NoKeyDemo() {
+      const [items, setItems] = useState(INITIAL);
+      const [ops, setOps] = useState([]);
+
+      function addLog(msg, type) {
+        setOps(prev => [{ msg, type, t: Date.now() }, ...prev].slice(0, 15));
+      }
+
+      function prepend() {
+        const newItem = { id: Date.now(), name: '⭐ NEW', color: COLORS[5] };
+        setItems(prev => [newItem, ...prev]);
+        addLog('Prepended item — React sees index 0 changed → updates all 3 existing + mounts 1 new', 'update');
+      }
+
+      function remove() {
+        setItems(prev => prev.slice(1));
+        addLog('Removed first — React sees all indices shifted → updates remaining items unnecessarily', 'update');
+      }
+
+      return (
+        <div className="panel bad">
+          <h2>❌ No Keys (using index)</h2>
+          <div className="section-title">Type in the inputs — then prepend or remove items</div>
+          <div style={{ marginBottom: 10 }}>
+            <button className="danger" onClick={prepend}>+ Prepend Item</button>
+            <button className="danger" onClick={remove}>Remove First</button>
+            <button onClick={() => setItems(INITIAL)}>Reset</button>
+          </div>
+          {items.map((item, i) => <ItemNoKey key={i} {...item} />)}
+          <div className="ops-log">
+            {ops.map((op, i) => (
+              <div key={i} className={`log-entry ${op.type}`}>{op.msg}</div>
+            ))}
+            {ops.length === 0 && <div className="neutral">Interact with the list above...</div>}
+          </div>
+        </div>
+      );
+    }
+
+    function WithKeyDemo() {
+      const [items, setItems] = useState(INITIAL);
+      const [ops, setOps] = useState([]);
+
+      function addLog(msg, type) {
+        setOps(prev => [{ msg, type, t: Date.now() }, ...prev].slice(0, 15));
+      }
+
+      function prepend() {
+        const newItem = { id: Date.now(), name: '⭐ NEW', color: COLORS[5] };
+        setItems(prev => [newItem, ...prev]);
+        addLog('Prepended — React matches by key: only 1 mount (new item), others skipped ✓', 'mount');
+      }
+
+      function remove() {
+        setItems(prev => prev.slice(1));
+        addLog('Removed — React matches remaining items by key: 0 unnecessary updates ✓', 'mount');
+      }
+
+      return (
+        <div className="panel good">
+          <h2>✅ With Stable Keys (item.id)</h2>
+          <div className="section-title">Type in the inputs — then prepend or remove items</div>
+          <div style={{ marginBottom: 10 }}>
+            <button className="success" onClick={prepend}>+ Prepend Item</button>
+            <button className="success" onClick={remove}>Remove First</button>
+            <button onClick={() => setItems(INITIAL)}>Reset</button>
+          </div>
+          {items.map(item => <ItemWithKey key={item.id} {...item} />)}
+          <div className="ops-log">
+            {ops.map((op, i) => (
+              <div key={i} className={`log-entry ${op.type}`}>{op.msg}</div>
+            ))}
+            {ops.length === 0 && <div className="neutral">Interact with the list above...</div>}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>03 — Keys & Reconciliation</h1>
+          <p className="desc">
+            Keys tell React which items in a list correspond between renders. Without keys, React uses position (index) — causing it to incorrectly reuse/update the wrong DOM nodes when items are added/removed.
+            <br/>Type something in the note fields, then prepend an item — watch what happens to the existing inputs.
+          </p>
+
+          <div className="layout">
+            <NoKeyDemo />
+            <WithKeyDemo />
+
+            <div className="explain">
+              <strong style={{ color: '#89b4fa', fontSize: 14 }}>What's happening under the hood</strong><br/><br/>
+              <strong>Without keys (key=index):</strong> When you prepend an item, position 0 now holds the new item.
+              React sees: "index 0 changed from Alice → NEW, index 1 changed from Bob → Alice, index 2 changed from Carol → Bob".
+              It <span className="hl">re-renders all 3 existing items</span> and mounts 1 new one.
+              The input values (local state) follow the DOM nodes, not the data — so they appear to "shift down".
+              This is a <span className="hl">state corruption bug</span>.<br/><br/>
+              <strong>With stable keys (key=item.id):</strong> React can match each item across renders by its stable identity.
+              When you prepend, React sees: "id=1 is still Alice, id=2 is still Bob, id=3 is still Carol".
+              It <span className="hl">only mounts the new item</span> — existing DOM nodes are reused, their input state preserved.<br/><br/>
+              <strong>Rules for keys:</strong><br/>
+              ✅ Use stable, unique IDs from your data (database id, uuid)<br/>
+              ✅ Keys must be unique among siblings (not globally)<br/>
+              ❌ Never use <code>Math.random()</code> — forces remount every render<br/>
+              ❌ Never use array index when items can be reordered/filtered/prepended<br/>
+              ⚠️ Index as key is OK only for static, never-reordered lists
+            </div>
+
+            <div className="explain" style={{ gridColumn: 1 }}>
+              <strong style={{ color: '#89b4fa' }}>How key matching works in the reconciler</strong><br/><br/>
+              <div className="key-demo">
+                <div className="neutral">// React builds a Map of oldChildren by key</div>
+                <div>const existingChildren = <span style={{ color: '#89b4fa' }}>new Map</span>();</div>
+                <div>oldFibers.forEach(fiber =&gt; existingChildren.<span style={{ color: '#cba6f7' }}>set</span>(fiber.key ?? fiber.index, fiber));</div>
+                <br/>
+                <div className="neutral">// For each new child, look up by key</div>
+                <div>newChildren.forEach(newChild =&gt; {'{'}</div>
+                <div>&nbsp;&nbsp;const matchedFiber = existingChildren.<span style={{ color: '#cba6f7' }}>get</span>(newChild.key);</div>
+                <div>&nbsp;&nbsp;<span style={{ color: '#89b4fa' }}>if</span> (matchedFiber && matchedFiber.type === newChild.type) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="good-key">// REUSE: update existing fiber</span></div>
+                <div>&nbsp;&nbsp;{'}'} else {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="bad-key">// MOUNT: create new fiber (state lost)</span></div>
+                <div>&nbsp;&nbsp;{'}'}</div>
+                <div>{'}'});</div>
+              </div>
+            </div>
+
+            <div className="explain" style={{ gridColumn: 2 }}>
+              <strong style={{ color: '#89b4fa' }}>Forced re-mount via key change</strong><br/><br/>
+              Changing a component's key forces a complete unmount + remount — even if the element type is the same.
+              This is an intentional escape hatch to reset state:
+              <div className="key-demo" style={{ marginTop: 10 }}>
+                <div className="neutral">// Trick: use key to reset a form</div>
+                <div>const [formKey, setFormKey] = useState(0);</div>
+                <br/>
+                <div>&lt;UserForm key={'{formKey}'} /&gt;</div>
+                <br/>
+                <div className="neutral">// Clicking "Reset" forces a full remount</div>
+                <div className="neutral">// All internal state of UserForm is cleared</div>
+                <div>&lt;button onClick={() =&gt; setFormKey(k =&gt; k + 1)}&gt;Reset&lt;/button&gt;</div>
+              </div>
+              <div style={{ marginTop: 10, fontSize: 12, color: '#888' }}>
+                This works because React treats a different key as a completely new element, even at the same position in the tree.
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

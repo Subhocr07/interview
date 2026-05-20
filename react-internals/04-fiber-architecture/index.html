@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>04 - Fiber Architecture</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .fiber-tree { display: flex; gap: 0; flex-direction: column; }
+    .fiber-node { display: inline-flex; flex-direction: column; }
+    .node-box { background: #1a1a2e; border: 1px solid #4f46e5; border-radius: 8px; padding: 10px 14px; font-size: 12px; font-family: monospace; cursor: pointer; transition: border-color 0.15s; min-width: 160px; }
+    .node-box:hover, .node-box.selected { border-color: #89b4fa; background: #1e2040; }
+    .node-box .type { color: #89b4fa; font-weight: 700; font-size: 13px; }
+    .node-box .key-val { color: #888; font-size: 11px; }
+    .node-box .state { color: #a6e3a1; font-size: 11px; }
+    .connector { color: #444; font-size: 12px; font-family: monospace; margin: 2px 0 2px 20px; }
+    .layout { display: flex; gap: 20px; }
+    .left { flex: 1; }
+    .right { width: 360px; }
+    .fiber-detail { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; position: sticky; top: 40px; }
+    .fiber-detail h3 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .prop-row { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid #222; font-size: 12px; font-family: monospace; }
+    .prop-key { color: #cba6f7; min-width: 120px; flex-shrink: 0; }
+    .prop-val { color: #a6e3a1; word-break: break-all; }
+    .prop-val.pointer { color: #89b4fa; }
+    .prop-val.null { color: #666; }
+    .prop-val.fn { color: #f9e2af; }
+    .section-title { font-size: 11px; text-transform: uppercase; color: #888; letter-spacing: .05em; margin: 14px 0 8px; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 16px; }
+    .explain code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .hl { color: #f9e2af; }
+    .work-loop { background: #111; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 16px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .wl-step { padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; font-size: 12px; }
+    .wl-step.active { background: rgba(79,70,229,0.2); border-left: 3px solid #4f46e5; }
+    .wl-step.done { background: rgba(16,185,129,0.1); border-left: 3px solid #10b981; color: #a6e3a1; }
+    .wl-step.pending { color: #666; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 8px; }
+    button:hover { background: #30363d; }
+    .two-tree { display: flex; gap: 20px; }
+    .tree-panel { flex: 1; background: #1a1a1a; border-radius: 8px; padding: 14px; border: 1px solid #333; }
+    .tree-panel h4 { font-size: 12px; color: #888; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState } = React;
+
+    const FIBER_TREE = {
+      type: 'App', tag: 'FunctionComponent',
+      stateNode: null, pendingProps: {}, memoizedProps: {},
+      memoizedState: '{ count: 0 }', flags: 0,
+      child: {
+        type: 'div', tag: 'HostComponent',
+        stateNode: '<div> DOM node', pendingProps: {}, memoizedProps: {},
+        memoizedState: null, flags: 0,
+        child: {
+          type: 'Counter', tag: 'FunctionComponent',
+          stateNode: null, pendingProps: { initial: 0 }, memoizedProps: { initial: 0 },
+          memoizedState: '{ value: 0 } → { queue: [...] }', flags: 0,
+          child: {
+            type: 'button', tag: 'HostComponent',
+            stateNode: '<button> DOM node', pendingProps: {}, memoizedProps: {},
+            memoizedState: null, flags: 0,
+            child: null,
+            sibling: null,
+            return: 'Counter',
+          },
+          sibling: {
+            type: 'Display', tag: 'FunctionComponent',
+            stateNode: null, pendingProps: { value: 0 }, memoizedProps: { value: 0 },
+            memoizedState: null, flags: 0,
+            child: null, sibling: null, return: 'div',
+          },
+          return: 'div',
+        },
+        sibling: null,
+        return: 'App',
+      },
+      sibling: null,
+      return: null,
+    };
+
+    function FiberNode({ fiber, depth = 0, selected, onSelect }) {
+      if (!fiber) return null;
+      const isSelected = selected === fiber.type;
+      return (
+        <div style={{ marginLeft: depth * 24 }}>
+          {depth > 0 && <div className="connector">{'└─'}</div>}
+          <div
+            className={`node-box ${isSelected ? 'selected' : ''}`}
+            onClick={() => onSelect(fiber)}
+            style={{ marginBottom: 6 }}
+          >
+            <div className="type">{fiber.type}</div>
+            <div className="key-val">tag: {fiber.tag}</div>
+            {fiber.memoizedState && <div className="state">state: {fiber.memoizedState}</div>}
+          </div>
+          {fiber.child && <FiberNode fiber={fiber.child} depth={depth + 1} selected={selected} onSelect={onSelect} />}
+          {fiber.sibling && <FiberNode fiber={fiber.sibling} depth={depth} selected={selected} onSelect={onSelect} />}
+        </div>
+      );
+    }
+
+    const FIBER_PROPS = [
+      { key: 'type', desc: 'The element type — string (div), class/function component' },
+      { key: 'tag', desc: 'Numeric tag: 0=FunctionComponent, 1=ClassComponent, 5=HostComponent(DOM), 3=HostRoot' },
+      { key: 'stateNode', desc: 'For DOM elements: the actual DOM node. For class components: the class instance. For function components: null.' },
+      { key: 'child', desc: '→ pointer to FIRST child fiber' },
+      { key: 'sibling', desc: '→ pointer to NEXT sibling fiber' },
+      { key: 'return', desc: '→ pointer to PARENT fiber (called "return" not "parent")' },
+      { key: 'pendingProps', desc: 'Props that are being processed in the current work loop' },
+      { key: 'memoizedProps', desc: 'Props from the last completed render (committed to DOM)' },
+      { key: 'memoizedState', desc: 'For hooks: linked list of hook states. For class components: this.state' },
+      { key: 'updateQueue', desc: 'Linked list of pending state updates to be processed' },
+      { key: 'flags', desc: 'Bitmask of side effects: Placement=2, Update=4, Deletion=8, etc.' },
+      { key: 'lanes', desc: 'Priority bitmask for concurrent mode scheduling' },
+      { key: 'alternate', desc: '→ the "work-in-progress" twin fiber (double buffering)' },
+    ];
+
+    function App() {
+      const [selected, setSelected] = useState(null);
+
+      return (
+        <div>
+          <h1>04 — Fiber Architecture</h1>
+          <p className="desc">
+            React Fiber (introduced in React 16) replaced the old recursive stack reconciler with a linked-list based architecture.
+            Each React element has a corresponding <span style={{ color: '#f9e2af' }}>Fiber node</span> — a JS object with pointers to its child, sibling, and parent.
+            This structure allows React to pause, resume, and prioritize work (essential for Concurrent Mode).
+          </p>
+
+          <div className="layout">
+            <div className="left">
+              <div className="section-title">Fiber Tree — click a node to inspect</div>
+              <FiberNode fiber={FIBER_TREE} selected={selected?.type} onSelect={setSelected} />
+
+              <div className="explain">
+                <strong style={{ color: '#89b4fa' }}>Why a linked list instead of a call stack?</strong><br/><br/>
+                The old React reconciler used the <span className="hl">JavaScript call stack</span> — it was recursive and could not be interrupted.
+                Once reconciliation started, it ran to completion (blocking the main thread for potentially hundreds of ms).<br/><br/>
+                Fiber replaces this with an <span className="hl">explicit work loop + linked list</span>.
+                Each fiber is a "unit of work". React processes one fiber at a time, and after each unit, it can check:
+                "Is there something more urgent?" If yes, it pauses and handles the high-priority work first.<br/><br/>
+                <strong>Double Buffering (alternate):</strong> React maintains two fiber trees — the <span className="hl">current tree</span> (what's on screen) and a <span className="hl">work-in-progress tree</span> (being built).
+                When rendering is done, it swaps them atomically. This is why you never see a half-rendered UI.
+              </div>
+
+              <div className="two-tree" style={{ marginTop: 16 }}>
+                <div className="tree-panel">
+                  <h4>Current Tree (on screen)</h4>
+                  <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#a6e3a1', lineHeight: 1.8 }}>
+                    <div>App.alternate.stateNode</div>
+                    <div>  └─ div (DOM: real node)</div>
+                    <div>       └─ Counter.memoizedState</div>
+                    <div>              → {'{'} memoizedState: 0 {'}'}</div>
+                  </div>
+                </div>
+                <div className="tree-panel" style={{ borderColor: '#4f46e5' }}>
+                  <h4 style={{ color: '#89b4fa' }}>Work-in-Progress Tree (being built)</h4>
+                  <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#89b4fa', lineHeight: 1.8 }}>
+                    <div>App (alternate fiber)</div>
+                    <div>  └─ div (alternate fiber)</div>
+                    <div>       └─ Counter.pendingProps</div>
+                    <div>              → {'{'} memoizedState: 1 {'}'}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="right">
+              <div className="fiber-detail">
+                <h3>Fiber Node Structure</h3>
+                {selected ? (
+                  <>
+                    <div style={{ color: '#89b4fa', fontWeight: 700, marginBottom: 10, fontFamily: 'monospace' }}>{selected.type}</div>
+                    {Object.entries(selected).map(([k, v]) => (
+                      <div className="prop-row" key={k}>
+                        <span className="prop-key">.{k}</span>
+                        <span className={`prop-val ${v === null ? 'null' : typeof v === 'object' ? 'pointer' : ''}`}>
+                          {v === null ? 'null' : typeof v === 'object' ? `→ Fiber<${v.type}>` : String(v)}
+                        </span>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <div style={{ color: '#666', fontSize: 13 }}>Click a fiber node to inspect its properties</div>
+                )}
+
+                <div className="section-title" style={{ marginTop: 20 }}>Key Fiber Fields</div>
+                {FIBER_PROPS.map(p => (
+                  <div key={p.key} style={{ marginBottom: 8, fontSize: 12 }}>
+                    <div style={{ color: '#cba6f7', fontFamily: 'monospace' }}>.{p.key}</div>
+                    <div style={{ color: '#888', fontSize: 11, paddingLeft: 8 }}>{p.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="work-loop">
+            <div style={{ color: '#89b4fa', marginBottom: 8 }}>// Simplified Fiber Work Loop</div>
+            <div><span className="kw">function</span> <span className="fn-name">workLoop</span>() {'{'}</div>
+            <div>&nbsp;&nbsp;<span className="kw">while</span> (workInProgress !== null && !shouldYield()) {'{'}</div>
+            <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Process one fiber at a time</span></div>
+            <div>&nbsp;&nbsp;&nbsp;&nbsp;workInProgress = <span className="fn-name">performUnitOfWork</span>(workInProgress);</div>
+            <div>&nbsp;&nbsp;{'}'}</div>
+            <div>{'}'}</div>
+            <br/>
+            <div><span className="kw">function</span> <span className="fn-name">performUnitOfWork</span>(fiber) {'{'}</div>
+            <div>&nbsp;&nbsp;<span className="fn-name">beginWork</span>(fiber); <span className="cm">// render the component, reconcile children</span></div>
+            <div>&nbsp;&nbsp;<span className="kw">if</span> (fiber.child) <span className="kw">return</span> fiber.child; <span className="cm">// go deeper</span></div>
+            <div>&nbsp;&nbsp;<span className="cm">// No child → complete this node, move to sibling or parent</span></div>
+            <div>&nbsp;&nbsp;<span className="fn-name">completeWork</span>(fiber);</div>
+            <div>&nbsp;&nbsp;<span className="kw">if</span> (fiber.sibling) <span className="kw">return</span> fiber.sibling;</div>
+            <div>&nbsp;&nbsp;<span className="kw">return</span> fiber.return; <span className="cm">// backtrack to parent</span></div>
+            <div>{'}'}</div>
+            <br/>
+            <div><span className="cm">// shouldYield() checks if the browser needs control back (Concurrent Mode)</span></div>
+            <div><span className="kw">function</span> <span className="fn-name">shouldYield</span>() {'{'}</div>
+            <div>&nbsp;&nbsp;<span className="kw">return</span> <span className="fn-name">getCurrentTime</span>() &gt;= deadline; <span className="cm">// ~5ms time slices</span></div>
+            <div>{'}'}</div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

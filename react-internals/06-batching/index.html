@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>06 - Batching (React 17 vs 18)</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; }
+    .panel.bad { border-top: 3px solid #f85149; }
+    .panel.good { border-top: 3px solid #3fb950; }
+    .panel h2 { font-size: 14px; margin-bottom: 6px; }
+    .panel.bad h2 { color: #f85149; }
+    .panel.good h2 { color: #3fb950; }
+    .panel .sub { font-size: 12px; color: #888; margin-bottom: 14px; }
+    button { padding: 8px 16px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 13px; margin-right: 8px; margin-bottom: 10px; }
+    button:hover { background: #30363d; }
+    .counter { font-size: 28px; font-weight: 700; color: #89b4fa; margin: 12px 0; }
+    .render-log { background: #0d1117; border-radius: 6px; padding: 10px; max-height: 180px; overflow-y: auto; font-size: 11px; font-family: monospace; }
+    .log-render { color: #f85149; }
+    .log-batch { color: #3fb950; }
+    .log-info { color: #888; }
+    .render-count-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+    .badge-bad { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+    .badge-good { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; grid-column: 1 / -1; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; grid-column: 1 / -1; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .hl-bad { color: #f85149; }
+    .hl-good { color: #3fb950; }
+    .comparison-row { display: flex; gap: 16px; padding: 10px 0; border-bottom: 1px solid #222; font-size: 13px; }
+    .comparison-row:last-child { border-bottom: none; }
+    .comp-label { width: 180px; color: #888; flex-shrink: 0; }
+    .comp-bad { color: #f85149; flex: 1; }
+    .comp-good { color: #3fb950; flex: 1; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, startTransition, flushSync } = React;
+
+    let renderCount17 = 0;
+    let renderCount18 = 0;
+
+    function OldBatchingDemo() {
+      const [a, setA] = useState(0);
+      const [b, setB] = useState(0);
+      const [c, setC] = useState(0);
+      const [logs, setLogs] = useState([]);
+      const renderRef = useRef(0);
+      renderRef.current++;
+      renderCount17++;
+
+      function addLog(msg, type) {
+        setLogs(prev => [{ msg, type, t: Date.now() }, ...prev].slice(0, 20));
+      }
+
+      function handleClickEvent() {
+        // React 17 behavior: batches these inside event handlers
+        setA(x => x + 1);
+        setB(x => x + 1);
+        setC(x => x + 1);
+        addLog('3 setStates inside click handler → 1 render (batched ✓)', 'batch');
+      }
+
+      function handleAsync() {
+        // React 17 behavior: does NOT batch inside setTimeout/Promise
+        setTimeout(() => {
+          const before = renderCount17;
+          setA(x => x + 1);
+          setB(x => x + 1);
+          setC(x => x + 1);
+          // In React 17, each setState in setTimeout causes a separate render
+          addLog('3 setStates in setTimeout → 3 renders in React 17! (no batching)', 'bad');
+        }, 0);
+      }
+
+      function handleFetch() {
+        // Simulating after a fetch — same issue in React 17
+        Promise.resolve().then(() => {
+          setA(x => x + 1);
+          setB(x => x + 1);
+          setC(x => x + 1);
+          addLog('3 setStates in Promise.then → 3 renders in React 17!', 'bad');
+        });
+      }
+
+      return (
+        <div className="panel bad">
+          <h2>React 17 Batching</h2>
+          <div className="sub">Only batches inside synthetic event handlers. async callbacks: 1 setState = 1 render</div>
+          <div className="counter">a={a} b={b} c={c}</div>
+          <div>Renders: <span className="render-count-badge badge-bad">{renderRef.current}</span></div>
+          <div style={{ marginTop: 12 }}>
+            <button onClick={handleClickEvent}>Click Handler (batched)</button>
+            <button onClick={handleAsync}>setTimeout (unbatched in React 17)</button>
+            <button onClick={handleFetch}>Promise (unbatched in React 17)</button>
+          </div>
+          <div className="render-log" style={{ marginTop: 10 }}>
+            {logs.map((l, i) => (
+              <div key={i} className={l.type === 'batch' ? 'log-batch' : l.type === 'bad' ? 'log-render' : 'log-info'}>
+                {l.msg}
+              </div>
+            ))}
+            {logs.length === 0 && <div className="log-info">Click a button to see batching behavior</div>}
+          </div>
+        </div>
+      );
+    }
+
+    function NewBatchingDemo() {
+      const [a, setA] = useState(0);
+      const [b, setB] = useState(0);
+      const [c, setC] = useState(0);
+      const [logs, setLogs] = useState([]);
+      const renderRef = useRef(0);
+      renderRef.current++;
+
+      function addLog(msg, type) {
+        setLogs(prev => [{ msg, type, t: Date.now() }, ...prev].slice(0, 20));
+      }
+
+      function handleClickEvent() {
+        setA(x => x + 1);
+        setB(x => x + 1);
+        setC(x => x + 1);
+        addLog('3 setStates in click → 1 render (batched ✓)', 'batch');
+      }
+
+      function handleAsync() {
+        // React 18: automatic batching works everywhere!
+        setTimeout(() => {
+          setA(x => x + 1);
+          setB(x => x + 1);
+          setC(x => x + 1);
+          addLog('3 setStates in setTimeout → 1 render (auto-batched in React 18 ✓)', 'batch');
+        }, 0);
+      }
+
+      function handleFetch() {
+        Promise.resolve().then(() => {
+          setA(x => x + 1);
+          setB(x => x + 1);
+          setC(x => x + 1);
+          addLog('3 setStates in Promise → 1 render (auto-batched in React 18 ✓)', 'batch');
+        });
+      }
+
+      function handleFlushSync() {
+        // flushSync: opt-out of batching when you need immediate DOM update
+        flushSync(() => { setA(x => x + 1); });
+        flushSync(() => { setB(x => x + 1); });
+        addLog('flushSync forces immediate render per call (opt-out of batching)', 'bad');
+      }
+
+      return (
+        <div className="panel good">
+          <h2>React 18 — Automatic Batching</h2>
+          <div className="sub">Batches ALL state updates everywhere: events, setTimeout, Promise, native handlers</div>
+          <div className="counter">a={a} b={b} c={c}</div>
+          <div>Renders: <span className="render-count-badge badge-good">{renderRef.current}</span></div>
+          <div style={{ marginTop: 12 }}>
+            <button onClick={handleClickEvent}>Click Handler (batched)</button>
+            <button onClick={handleAsync}>setTimeout (auto-batched ✓)</button>
+            <button onClick={handleFetch}>Promise (auto-batched ✓)</button>
+            <button onClick={handleFlushSync}>flushSync (opt-out)</button>
+          </div>
+          <div className="render-log" style={{ marginTop: 10 }}>
+            {logs.map((l, i) => (
+              <div key={i} className={l.type === 'batch' ? 'log-batch' : l.type === 'bad' ? 'log-render' : 'log-info'}>
+                {l.msg}
+              </div>
+            ))}
+            {logs.length === 0 && <div className="log-info">Click a button to see batching behavior</div>}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>06 — Batching (React 17 vs React 18)</h1>
+          <p className="desc">
+            Batching means React groups multiple <code style={{ color: '#89b4fa' }}>setState</code> calls into a single re-render.
+            React 17 only batched inside event handlers. React 18 introduced <strong style={{ color: '#3fb950' }}>Automatic Batching</strong> — works everywhere.
+          </p>
+
+          <div className="layout">
+            <OldBatchingDemo />
+            <NewBatchingDemo />
+
+            <div className="code">
+              <div className="cm">// React 17 — batching only in event handlers</div>
+              <div><span className="kw">function</span> <span className="fn-name">onClick</span>() {'{'}</div>
+              <div>&nbsp;&nbsp;setA(1); <span className="cm">// ← queued</span></div>
+              <div>&nbsp;&nbsp;setB(2); <span className="cm">// ← queued</span></div>
+              <div>&nbsp;&nbsp;setC(3); <span className="cm">// ← queued</span></div>
+              <div>{'}'} <span className="hl-good">// 1 render ✓</span></div>
+              <br/>
+              <div><span className="kw">function</span> <span className="fn-name">onClick</span>() {'{'}</div>
+              <div>&nbsp;&nbsp;setTimeout(() =&gt; {'{'}</div>
+              <div>&nbsp;&nbsp;&nbsp;&nbsp;setA(1); <span className="hl-bad">// render #1 ✗</span></div>
+              <div>&nbsp;&nbsp;&nbsp;&nbsp;setB(2); <span className="hl-bad">// render #2 ✗</span></div>
+              <div>&nbsp;&nbsp;&nbsp;&nbsp;setC(3); <span className="hl-bad">// render #3 ✗</span></div>
+              <div>&nbsp;&nbsp;{'}'});</div>
+              <div>{'}'}</div>
+              <br/>
+              <div className="cm">// React 18 — automatic batching everywhere</div>
+              <div><span className="kw">function</span> <span className="fn-name">onClick</span>() {'{'}</div>
+              <div>&nbsp;&nbsp;setTimeout(() =&gt; {'{'}</div>
+              <div>&nbsp;&nbsp;&nbsp;&nbsp;setA(1); <span className="cm">// ← queued</span></div>
+              <div>&nbsp;&nbsp;&nbsp;&nbsp;setB(2); <span className="cm">// ← queued</span></div>
+              <div>&nbsp;&nbsp;&nbsp;&nbsp;setC(3); <span className="cm">// ← queued</span></div>
+              <div>&nbsp;&nbsp;{'}'});</div>
+              <div>{'}'} <span className="hl-good">// 1 render ✓</span></div>
+              <br/>
+              <div className="cm">// Opt-out with flushSync when you need synchronous DOM update</div>
+              <div><span className="fn-name">flushSync</span>(() =&gt; setA(1)); <span className="cm">// renders immediately</span></div>
+              <div><span className="fn-name">flushSync</span>(() =&gt; setB(2)); <span className="cm">// renders immediately</span></div>
+            </div>
+
+            <div className="explain" style={{ gridColumn: 1 }}>
+              <strong style={{ color: '#89b4fa' }}>How batching works internally</strong><br/><br/>
+              React uses a global variable called <code>executionContext</code> to track what kind of work is happening.
+              When setState is called, React checks: "Am I currently inside a batch?"<br/><br/>
+              In React 18, all setState calls are enqueued via the Scheduler and processed in the next microtask (via <code>queueMicrotask</code>).
+              This naturally groups all synchronous setState calls into one update, regardless of where they come from.
+            </div>
+
+            <div className="explain" style={{ gridColumn: 2 }}>
+              <strong style={{ color: '#89b4fa' }}>When NOT to batch (flushSync)</strong><br/><br/>
+              Sometimes you need a synchronous DOM update before continuing:<br/>
+              • Measuring DOM after setState (before the next frame)<br/>
+              • Third-party library integration that reads DOM synchronously<br/>
+              • When you must guarantee order of DOM mutations<br/><br/>
+              <code>flushSync(() =&gt; setState(...))</code> forces React to commit immediately,
+              bypassing the batch. Use sparingly — it hurts performance.
+            </div>
+
+            <div className="explain">
+              <strong style={{ color: '#89b4fa' }}>Batching + Transitions (React 18)</strong><br/><br/>
+              React 18 also introduces <code>startTransition</code> — a way to mark updates as "non-urgent".
+              Urgent updates (typing, clicking) interrupt transitions. This is a step beyond batching:
+              it's about <strong>prioritizing</strong> which updates to process first.
+              <div style={{ marginTop: 10, background: '#0d1117', borderRadius: 6, padding: 10, fontFamily: 'monospace', fontSize: 12 }}>
+                <div className="cm">// Urgent: types immediately into input</div>
+                <div>setInputValue(newValue);</div>
+                <br/>
+                <div className="cm">// Non-urgent: filtering 10k items can wait</div>
+                <div><span className="fn-name">startTransition</span>(() =&gt; {'{'}</div>
+                <div>&nbsp;&nbsp;setFilteredList(filter(allItems, newValue));</div>
+                <div>{'}'});</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

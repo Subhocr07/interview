@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>17 - SSR Hydration Internals</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .ssr-box { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-bottom: 14px; border: 1px solid #333; }
+    .ssr-box .hl-server { color: #3fb950; }
+    .ssr-box .hl-client { color: #89b4fa; }
+    .ssr-box .hl-mismatch { color: #f85149; background: rgba(248,81,73,0.1); }
+    .phase-timeline { display: flex; flex-direction: column; gap: 0; }
+    .phase-item { display: flex; gap: 14px; }
+    .phase-left { display: flex; flex-direction: column; align-items: center; width: 24px; }
+    .phase-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+    .phase-line { width: 2px; background: #333; flex: 1; margin: 2px 0; }
+    .phase-body { padding-bottom: 14px; flex: 1; }
+    .phase-body .title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+    .phase-body .sub { font-size: 11px; color: #888; line-height: 1.5; }
+    .mismatch-warning { background: #1a0d0d; border: 1px solid #f85149; border-radius: 6px; padding: 12px; margin-top: 10px; }
+    .mismatch-warning h4 { color: #f85149; margin-bottom: 6px; font-size: 13px; }
+    .mismatch-warning p { font-size: 12px; color: #888; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // ─── Simulated hydration demo ────────────────────────────────────
+    function HydrationDemo() {
+      const [phase, setPhase] = useState('server-html');
+      const [isHydrated, setIsHydrated] = useState(false);
+      const [count, setCount] = useState(0);
+
+      useEffect(() => {
+        // Simulate hydration completing after mount
+        const timer = setTimeout(() => setIsHydrated(true), 800);
+        return () => clearTimeout(timer);
+      }, []);
+
+      const serverHTML = `<!-- Server rendered HTML (what browser receives) -->
+<div id="root">
+  <div class="app">
+    <h2>Product Page</h2>
+    <!-- Static content is visible immediately -->
+    <p>Price: $99.99</p>
+    <!-- Buttons exist in HTML but have no event listeners yet -->
+    <button>Add to Cart (0)</button>
+  </div>
+</div>`;
+
+      const clientHydrate = `// React 18 client entry (hydrateRoot)
+import { hydrateRoot } from 'react-dom/client';
+
+// Tells React: "Walk the existing DOM,
+// don't create new elements — just attach
+// event listeners and state"
+hydrateRoot(
+  document.getElementById('root'),
+  <App />  // Must produce same output as server!
+);`;
+
+      return (
+        <div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setPhase('server-html')}
+              style={{ borderColor: phase === 'server-html' ? '#3fb950' : '#30363d' }}
+            >
+              1. Server HTML
+            </button>
+            <button
+              onClick={() => setPhase('loading-js')}
+              style={{ borderColor: phase === 'loading-js' ? '#e3b341' : '#30363d' }}
+            >
+              2. JS Loading
+            </button>
+            <button
+              onClick={() => setPhase('hydrating')}
+              style={{ borderColor: phase === 'hydrating' ? '#89b4fa' : '#30363d' }}
+            >
+              3. Hydrating
+            </button>
+            <button
+              onClick={() => setPhase('hydrated')}
+              style={{ borderColor: phase === 'hydrated' ? '#a855f7' : '#30363d' }}
+            >
+              4. Interactive
+            </button>
+          </div>
+
+          {phase === 'server-html' && (
+            <div>
+              <div style={{ fontSize: 12, color: '#3fb950', marginBottom: 8 }}>
+                ✓ User sees content immediately — no blank screen (FCP improvement)
+              </div>
+              <div className="ssr-box">
+                {serverHTML.split('\n').map((line, i) => (
+                  <div key={i} className={line.includes('button') ? 'hl-server' : ''}>
+                    {line || <br />}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {phase === 'loading-js' && (
+            <div>
+              <div style={{ fontSize: 12, color: '#e3b341', marginBottom: 8 }}>
+                ⏳ JS bundle downloading. HTML visible but buttons don't work yet (TTI gap).
+              </div>
+              <div style={{ background: '#111', borderRadius: 8, padding: 16 }}>
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>Product Page</div>
+                  <div style={{ fontSize: 22, color: '#e0e0e0', marginBottom: 6 }}>Price: $99.99</div>
+                  <button style={{ opacity: 0.5, cursor: 'not-allowed' }} disabled>
+                    Add to Cart ({count}) — NOT YET INTERACTIVE
+                  </button>
+                </div>
+                <div style={{ height: 4, background: '#1a1a1a', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: '60%', background: '#e3b341', borderRadius: 2, animation: 'none' }} />
+                </div>
+                <div style={{ fontSize: 11, color: '#e3b341', marginTop: 6 }}>Loading bundle... 60%</div>
+              </div>
+            </div>
+          )}
+
+          {phase === 'hydrating' && (
+            <div>
+              <div style={{ fontSize: 12, color: '#89b4fa', marginBottom: 8 }}>
+                🔄 React walking DOM, matching fibers to existing nodes, attaching event listeners.
+              </div>
+              <div style={{ background: '#111', borderRadius: 8, padding: 16, border: '1px dashed #89b4fa' }}>
+                <div style={{ fontSize: 11, color: '#89b4fa', marginBottom: 10 }}>
+                  React is walking the existing DOM tree... ⟳
+                </div>
+                <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>Product Page</div>
+                <div style={{ fontSize: 22, color: '#e0e0e0', marginBottom: 6 }}>Price: $99.99</div>
+                <button style={{ borderColor: '#89b4fa', opacity: 0.7, cursor: 'wait' }}>
+                  Add to Cart ({count}) — Attaching handlers...
+                </button>
+              </div>
+            </div>
+          )}
+
+          {phase === 'hydrated' && (
+            <div>
+              <div style={{ fontSize: 12, color: '#a855f7', marginBottom: 8 }}>
+                ✓ Fully interactive! React has taken over. Click works.
+              </div>
+              <div style={{ background: '#111', borderRadius: 8, padding: 16, border: '1px solid #a855f7' }}>
+                <div style={{ fontSize: 12, color: '#888', marginBottom: 6 }}>Product Page</div>
+                <div style={{ fontSize: 22, color: '#e0e0e0', marginBottom: 6 }}>Price: $99.99</div>
+                <button onClick={() => setCount(c => c + 1)}>
+                  Add to Cart ({count}) — Click me! ✓
+                </button>
+                {count > 0 && (
+                  <div style={{ marginTop: 8, color: '#3fb950', fontSize: 13 }}>
+                    {count} item(s) in cart ✓
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="ssr-box" style={{ marginTop: 14 }}>
+            {clientHydrate.split('\n').map((line, i) => (
+              <div key={i} className="hl-client">{line || <br />}</div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>17 — SSR Hydration Internals</h1>
+          <p className="desc">
+            Hydration is the process of attaching React's event system to server-rendered HTML.
+            React walks the existing DOM instead of creating new nodes, matching fibers to DOM nodes
+            and attaching event listeners. React 18 introduces <strong>Selective Hydration</strong>
+            — hydrate in priority order based on user interaction.
+          </p>
+
+          <div className="layout">
+            <div className="panel" style={{ flex: 2 }}>
+              <h2>Hydration Lifecycle Demo</h2>
+              <HydrationDemo />
+            </div>
+
+            <div className="panel" style={{ flex: 1 }}>
+              <h2>Hydration Process Internals</h2>
+              <div className="phase-timeline">
+                {[
+                  { color: '#3fb950', title: 'Server: renderToString / renderToPipeableStream', sub: 'React renders the component tree to HTML string. No event listeners, no state — pure HTML output with special data attributes for React to identify structure.' },
+                  { color: '#e3b341', title: 'Browser receives HTML → FCP (First Contentful Paint)', sub: 'User sees content immediately. JS bundle starts downloading in parallel. Page is not interactive yet (TTI gap).' },
+                  { color: '#89b4fa', title: 'hydrateRoot() called', sub: 'Instead of createRoot().render(), use hydrateRoot(). This signals React to walk the existing DOM rather than creating new elements.' },
+                  { color: '#a855f7', title: 'React reconciles vs existing DOM', sub: 'React creates fiber nodes and matches them to existing DOM nodes (tryToClaimNextHydratableInstance). If match found, reuses the DOM node — no createElement.' },
+                  { color: '#f9e2af', title: 'Event listeners attached, state initialized', sub: 'After matching all fibers to DOM nodes, React attaches event delegation to the root container. useState initializes with the same values as server.' },
+                ].map((item, i, arr) => (
+                  <div key={i} className="phase-item">
+                    <div className="phase-left">
+                      <div className="phase-dot" style={{ background: item.color }} />
+                      {i < arr.length - 1 && <div className="phase-line" />}
+                    </div>
+                    <div className="phase-body">
+                      <div className="title" style={{ color: item.color }}>{item.title}</div>
+                      <div className="sub">{item.sub}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>Hydration Mismatches & React 18 Selective Hydration</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+                <div>
+                  <div className="mismatch-warning">
+                    <h4>Hydration Mismatch</h4>
+                    <p>
+                      When server HTML doesn't match what React would render on client,
+                      React throws a warning and re-renders from scratch (discards server HTML).
+                    </p>
+                  </div>
+                  <div className="code" style={{ marginTop: 10 }}>
+                    <div className="cm">// Common mismatch causes:</div>
+                    <div className="hl-mismatch">// 1. new Date() — different on server/client</div>
+                    <div>const time = <span className="kw">new</span> Date().toLocaleTimeString();</div>
+                    <br/>
+                    <div className="cm">// 2. Math.random() — different on server/client</div>
+                    <div className="cm">// 3. window/localStorage — not available on server</div>
+                    <div className="cm">// 4. typeof window !== 'undefined' checks</div>
+                    <br/>
+                    <div className="cm">// Fix: use useEffect to set dynamic values</div>
+                    <div><span className="kw">const</span> [time, setTime] = useState(<span className="str">''</span>);</div>
+                    <div>useEffect(() =&gt; setTime(<span className="kw">new</span> Date().toLocaleTimeString()), []);</div>
+                  </div>
+                </div>
+                <div>
+                  <div className="explain" style={{ marginTop: 0 }}>
+                    <strong style={{ color: '#89b4fa' }}>React 18: Selective Hydration</strong><br/><br/>
+                    Wrap parts of the page in <code>&lt;Suspense&gt;</code> to hydrate them independently.<br/><br/>
+                    React 18 hydrates the <strong>clicked part first</strong> — if you click a button
+                    while hydration is in progress, React immediately prioritizes hydrating that section
+                    so the click works ASAP.<br/><br/>
+                    This eliminates the "white flash" of re-rendering after hydration mismatch
+                    for most cases.
+                  </div>
+                  <div className="code" style={{ marginTop: 10 }}>
+                    <div className="cm">// Selective hydration with Suspense</div>
+                    <div>&lt;Layout&gt;</div>
+                    <div>&nbsp;&nbsp;<span className="cm">// Hydrated immediately</span></div>
+                    <div>&nbsp;&nbsp;&lt;NavBar /&gt;</div>
+                    <div>&nbsp;&nbsp;<span className="cm">// Hydrated lazily in background</span></div>
+                    <div>&nbsp;&nbsp;&lt;Suspense fallback={'{'}null{'}'}&gt;</div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;&lt;HeavyComponent /&gt;</div>
+                    <div>&nbsp;&nbsp;&lt;/Suspense&gt;</div>
+                    <div>&nbsp;&nbsp;<span className="cm">// If user clicks here → hydrates first</span></div>
+                    <div>&nbsp;&nbsp;&lt;Suspense fallback={'{'}null{'}'}&gt;</div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;&lt;Sidebar /&gt;</div>
+                    <div>&nbsp;&nbsp;&lt;/Suspense&gt;</div>
+                    <div>&lt;/Layout&gt;</div>
+                  </div>
+                </div>
+                <div className="code">
+                  <div className="cm">// How React matches DOM during hydration</div>
+                  <div><span className="kw">function</span> <span className="fn-name">tryToClaimNextHydratableInstance</span>(fiber) {'{'}</div>
+                  <div>&nbsp;&nbsp;<span className="kw">if</span> (nextHydratableInstance === null) {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// No more DOM nodes → mismatch</span></div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="fn-name">throwOnHydrationMismatch</span>();</div>
+                  <div>&nbsp;&nbsp;{'}'}</div>
+                  <div>&nbsp;&nbsp;<span className="kw">const</span> domNode = nextHydratableInstance;</div>
+                  <div>&nbsp;&nbsp;<span className="kw">if</span> (fiber.type !== domNode.localName) {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Tag mismatch (div vs span) → error</span></div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="fn-name">warnForHydrationMismatch</span>();</div>
+                  <div>&nbsp;&nbsp;{'}'} <span className="kw">else</span> {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Match! Reuse the DOM node</span></div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;fiber.stateNode = domNode;</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;adoptInstance(fiber, domNode);</div>
+                  <div>&nbsp;&nbsp;{'}'}</div>
+                  <div>{'}'}</div>
+                  <br/>
+                  <div className="cm">// createRoot vs hydrateRoot</div>
+                  <div className="cm">// createRoot: creates new DOM</div>
+                  <div className="cm">// hydrateRoot: reuses existing DOM</div>
+                  <div className="cm">// The difference is this one flag:</div>
+                  <div>workInProgress.mode |= ConcurrentMode</div>
+                  <div>&nbsp;&nbsp;| <span className="str">HydrationMode</span>; <span className="cm">// ← hydration flag</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

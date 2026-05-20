@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>13 - Error Boundaries Internals</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .error-ui { background: #1a0d0d; border: 2px solid #f85149; border-radius: 8px; padding: 16px; }
+    .error-ui h3 { color: #f85149; margin-bottom: 8px; }
+    .error-ui p { font-size: 13px; color: #888; margin-bottom: 10px; }
+    .error-ui pre { background: #0d0808; border-radius: 6px; padding: 10px; font-size: 11px; color: #f85149; overflow-x: auto; }
+    .ok-ui { background: #0d1a0d; border: 1px solid #3fb950; border-radius: 8px; padding: 16px; }
+    .ok-ui p { color: #3fb950; font-size: 13px; }
+    .phase-diagram { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .phase { display: flex; gap: 12px; align-items: flex-start; }
+    .phase-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+    .phase-content .title { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+    .phase-content .sub { font-size: 11px; color: #888; line-height: 1.5; }
+    .phase-line { width: 1px; background: #333; height: 16px; margin-left: 4px; }
+    .limitation-item { display: flex; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+    .limitation-item .icon { color: #f85149; flex-shrink: 0; }
+    .limitation-item .text { color: #888; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // ─── Error Boundary (must be a class component) ───────────────────
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null, info: null };
+      }
+
+      // Phase 1: called during RENDER phase — return new state to show fallback
+      static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+      }
+
+      // Phase 2: called during COMMIT phase — log error info
+      componentDidCatch(error, info) {
+        this.setState({ info: info.componentStack });
+        if (this.props.onError) {
+          this.props.onError(error, info);
+        }
+      }
+
+      render() {
+        if (this.state.hasError) {
+          if (this.props.fallback) {
+            return this.props.fallback(this.state.error, () => {
+              this.setState({ hasError: false, error: null, info: null });
+            });
+          }
+          return (
+            <div className="error-ui">
+              <h3>Something went wrong</h3>
+              <p>{String(this.state.error)}</p>
+              <pre>{this.state.info}</pre>
+              <button onClick={() => this.setState({ hasError: false, error: null, info: null })}>
+                Try Again
+              </button>
+            </div>
+          );
+        }
+        return this.props.children;
+      }
+    }
+
+    // ─── Buggy Components ─────────────────────────────────────────────
+    function BuggyRender({ shouldThrow }) {
+      if (shouldThrow) {
+        throw new Error('💥 Render-time error: something went wrong in BuggyRender');
+      }
+      return <div className="ok-ui"><p>BuggyRender is rendering fine ✓</p></div>;
+    }
+
+    function BuggyEffect({ shouldThrow }) {
+      useEffect(() => {
+        // Note: errors in effects do NOT get caught by error boundaries!
+        // They bubble to the window as unhandled errors
+        if (shouldThrow) {
+          // This won't be caught by ErrorBoundary
+        }
+      }, [shouldThrow]);
+
+      return <div className="ok-ui"><p>BuggyEffect (errors in effects bypass error boundaries)</p></div>;
+    }
+
+    function BuggyAsync() {
+      function handleClick() {
+        // Note: async errors do NOT get caught by error boundaries either
+        setTimeout(() => {
+          throw new Error('Async errors are NOT caught by error boundaries');
+        }, 100);
+      }
+      return (
+        <div className="ok-ui">
+          <p>Async error demo</p>
+          <button onClick={handleClick}>Throw async (not caught by EB)</button>
+        </div>
+      );
+    }
+
+    // ─── Main App ─────────────────────────────────────────────────────
+    function RenderErrorDemo() {
+      const [shouldThrow, setShouldThrow] = useState(false);
+      const [log, setLog] = useState([]);
+
+      return (
+        <div>
+          <button onClick={() => setShouldThrow(t => !t)}>
+            {shouldThrow ? 'Recover (stop throwing)' : 'Trigger Render Error'}
+          </button>
+          <div style={{ marginTop: 10 }}>
+            <ErrorBoundary
+              onError={(err, info) => {
+                setLog(prev => [{ err: err.message, stack: info.componentStack.trim() }, ...prev].slice(0, 3));
+              }}
+              fallback={(error, retry) => (
+                <div className="error-ui">
+                  <h3>Caught by ErrorBoundary!</h3>
+                  <p>{error.message}</p>
+                  <button onClick={() => { setShouldThrow(false); retry(); }}>Recover</button>
+                </div>
+              )}
+            >
+              <BuggyRender shouldThrow={shouldThrow} />
+            </ErrorBoundary>
+          </div>
+          {log.length > 0 && (
+            <div style={{ marginTop: 10, background: '#0d1117', borderRadius: 6, padding: 10, fontSize: 11, fontFamily: 'monospace' }}>
+              <div style={{ color: '#888', marginBottom: 4 }}>componentDidCatch fired:</div>
+              <div style={{ color: '#f85149' }}>{log[0].err}</div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>13 — Error Boundaries Internals</h1>
+          <p className="desc">
+            Error Boundaries catch JavaScript errors during <strong>rendering</strong>, in lifecycle methods,
+            and in constructors. They must be class components — React needs to call
+            <code>getDerivedStateFromError</code> (static) and <code>componentDidCatch</code> (instance).
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>Live Error Boundary Demo</h2>
+              <RenderErrorDemo />
+
+              <div className="explain" style={{ marginTop: 14 }}>
+                <strong style={{ color: '#f85149' }}>What errors ARE caught:</strong><br/>
+                • Errors during <strong>render</strong> (in JSX / return value)<br/>
+                • Errors in <strong>class lifecycle methods</strong> (componentDidMount, etc.)<br/>
+                • Errors in <strong>constructors</strong> of child components<br/><br/>
+                <strong style={{ color: '#3fb950' }}>What errors are NOT caught:</strong><br/>
+                • Errors in <strong>event handlers</strong> (use try/catch inside handler)<br/>
+                • <strong>Async errors</strong> (setTimeout, Promises) — no render-time fiber<br/>
+                • Errors in the error boundary <strong>itself</strong><br/>
+                • <strong>useEffect</strong> errors (not in render phase)
+              </div>
+            </div>
+
+            <div className="panel">
+              <h2>Internal Two-Phase Mechanism</h2>
+              <div className="phase-diagram">
+                {[
+                  { dot: '#f85149', title: 'Error thrown during render', sub: 'React catches it internally during the render phase workloop. The error propagates up the fiber tree.' },
+                  { line: true },
+                  { dot: '#e3b341', title: 'Find nearest ErrorBoundary fiber', sub: 'React walks the fiber return path upward until it finds a class component that defines getDerivedStateFromError or componentDidCatch.' },
+                  { line: true },
+                  { dot: '#89b4fa', title: 'getDerivedStateFromError(error)', sub: 'Called DURING the render phase. Returns new state object (e.g., { hasError: true }). This is a static method — no side effects, pure.' },
+                  { line: true },
+                  { dot: '#a855f7', title: 'Boundary re-renders with error state', sub: 'The error boundary component re-renders with the new state, returning the fallback UI instead of children.' },
+                  { line: true },
+                  { dot: '#3fb950', title: 'componentDidCatch(error, info)', sub: 'Called AFTER commit. The info object includes componentStack — a string showing which components were in the tree. Use for logging to Sentry, etc.' },
+                ].map((item, i) =>
+                  item.line
+                    ? <div key={i} className="phase-line" style={{ marginLeft: 4 }} />
+                    : (
+                      <div key={i} className="phase">
+                        <div className="phase-dot" style={{ background: item.dot }} />
+                        <div className="phase-content">
+                          <div className="title" style={{ color: item.dot }}>{item.title}</div>
+                          <div className="sub">{item.sub}</div>
+                        </div>
+                      </div>
+                    )
+                )}
+              </div>
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>Implementation & Patterns</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div className="code">
+                  <div className="cm">// Minimal Error Boundary</div>
+                  <div><span className="kw">class</span> <span className="fn-name">ErrorBoundary</span> <span className="kw">extends</span> React.Component {'{'}</div>
+                  <div>&nbsp;&nbsp;state = {'{'} hasError: <span className="kw">false</span>, error: <span className="kw">null</span> {'}'};</div>
+                  <br/>
+                  <div>&nbsp;&nbsp;<span className="cm">// Render phase — pure, no side effects</span></div>
+                  <div>&nbsp;&nbsp;<span className="kw">static</span> <span className="fn-name">getDerivedStateFromError</span>(error) {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> {'{'} hasError: <span className="kw">true</span>, error {'}'};</div>
+                  <div>&nbsp;&nbsp;{'}'}</div>
+                  <br/>
+                  <div>&nbsp;&nbsp;<span className="cm">// Commit phase — ok to log/fetch</span></div>
+                  <div>&nbsp;&nbsp;<span className="fn-name">componentDidCatch</span>(error, info) {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;logToSentry(error, info.componentStack);</div>
+                  <div>&nbsp;&nbsp;{'}'}</div>
+                  <br/>
+                  <div>&nbsp;&nbsp;<span className="fn-name">render</span>() {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">if</span> (<span className="kw">this</span>.state.hasError) {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> &lt;FallbackUI /&gt;;</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;{'}'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> <span className="kw">this</span>.props.children;</div>
+                  <div>&nbsp;&nbsp;{'}'}</div>
+                  <div>{'}'}</div>
+                </div>
+                <div>
+                  <div className="code">
+                    <div className="cm">// How React finds the boundary (simplified)</div>
+                    <div><span className="kw">function</span> <span className="fn-name">throwException</span>(root, returnFiber, error) {'{'}</div>
+                    <div>&nbsp;&nbsp;<span className="kw">let</span> workInProgress = returnFiber;</div>
+                    <div>&nbsp;&nbsp;<span className="kw">do</span> {'{'}</div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">const</span> inst = workInProgress.stateNode;</div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">if</span> (<span className="fn-name">isClassComponent</span>(workInProgress)</div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&amp;&amp; <span className="kw">typeof</span> inst.componentDidCatch === <span className="str">'function'</span>) {'{'}</div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Found boundary! Schedule update.</span></div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;enqueueCapturedUpdate(workInProgress, error);</div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span>;</div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;{'}'}</div>
+                    <div>&nbsp;&nbsp;&nbsp;&nbsp;workInProgress = workInProgress.return;</div>
+                    <div>&nbsp;&nbsp;{'}'} <span className="kw">while</span> (workInProgress !== null);</div>
+                    <div>&nbsp;&nbsp;<span className="cm">// No boundary found — unmount entire tree</span></div>
+                    <div>{'}'}</div>
+                  </div>
+                  <div className="explain" style={{ marginTop: 10 }}>
+                    <strong style={{ color: '#f9e2af' }}>Recovery pattern:</strong><br/>
+                    Add a <code>key</code> prop to ErrorBoundary and change it to reset:
+                    <div style={{ fontFamily: 'monospace', fontSize: 11, marginTop: 6, background: '#0d1117', padding: 8, borderRadius: 4 }}>
+                      &lt;ErrorBoundary key={'{'}resetKey{'}'}&gt;<br/>
+                      &nbsp;&nbsp;&lt;BuggyComponent /&gt;<br/>
+                      &lt;/ErrorBoundary&gt;
+                    </div>
+                    Changing the key unmounts + remounts the boundary, clearing error state.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

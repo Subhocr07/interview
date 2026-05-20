@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>14 - Suspense Internals</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .skeleton { background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%); background-size: 400% 100%; animation: shimmer 1.4s infinite; border-radius: 6px; }
+    @keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+    .skeleton-line { height: 14px; margin-bottom: 10px; border-radius: 4px; }
+    .data-card { background: #0d1a2a; border: 1px solid #4f46e5; border-radius: 8px; padding: 14px; }
+    .data-card h3 { color: #89b4fa; margin-bottom: 8px; font-size: 14px; }
+    .data-card p { font-size: 13px; color: #888; line-height: 1.6; }
+    .flow-step { display: flex; gap: 10px; margin-bottom: 12px; align-items: flex-start; }
+    .step-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+    .step-content .title { font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+    .step-content .sub { font-size: 11px; color: #888; line-height: 1.5; }
+    .promise-state { display: flex; gap: 8px; flex-direction: column; margin-top: 10px; }
+    .ps-item { background: #0d1117; border-radius: 6px; padding: 8px 12px; font-size: 11px; font-family: monospace; }
+    .ps-pending { border-left: 3px solid #e3b341; }
+    .ps-resolved { border-left: 3px solid #3fb950; }
+    .ps-rejected { border-left: 3px solid #f85149; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, Suspense, useTransition } = React;
+
+    // ─── Wrapable resource cache (the "suspend" pattern) ─────────────
+    function createResource(asyncFn) {
+      let status = 'pending';
+      let result;
+      const promise = asyncFn().then(
+        data => { status = 'resolved'; result = data; },
+        err  => { status = 'rejected'; result = err; }
+      );
+      return {
+        read() {
+          if (status === 'pending')  throw promise;    // ← KEY: throw the promise!
+          if (status === 'rejected') throw result;
+          return result;
+        }
+      };
+    }
+
+    // ─── Fake async data ──────────────────────────────────────────────
+    let userResource = null;
+    let postResource = null;
+
+    function fetchUser(delay) {
+      return new Promise(res => setTimeout(() => res({
+        id: 1, name: 'Alice Chen', role: 'Senior Engineer',
+        bio: 'Loves React internals and distributed systems.'
+      }), delay));
+    }
+
+    function fetchPosts(delay) {
+      return new Promise(res => setTimeout(() => res([
+        { id: 1, title: 'Understanding React Fiber' },
+        { id: 2, title: 'Suspense and the Promise Protocol' },
+        { id: 3, title: 'Concurrent Mode Explained' },
+      ]), delay));
+    }
+
+    // ─── Components that READ from resource ───────────────────────────
+    function UserProfile() {
+      const user = userResource.read(); // may throw promise
+      return (
+        <div className="data-card">
+          <h3>{user.name}</h3>
+          <p><strong>Role:</strong> {user.role}</p>
+          <p>{user.bio}</p>
+        </div>
+      );
+    }
+
+    function PostList() {
+      const posts = postResource.read();
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+          {posts.map(p => (
+            <div key={p.id} style={{ background: '#111', border: '1px solid #333', borderRadius: 6, padding: 10, fontSize: 13 }}>
+              {p.title}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ─── Skeleton fallbacks ───────────────────────────────────────────
+    function UserSkeleton() {
+      return (
+        <div style={{ padding: 14 }}>
+          <div className="skeleton skeleton-line" style={{ width: '40%' }} />
+          <div className="skeleton skeleton-line" style={{ width: '60%' }} />
+          <div className="skeleton skeleton-line" style={{ width: '80%' }} />
+        </div>
+      );
+    }
+
+    function PostsSkeleton() {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+          {[1,2,3].map(i => (
+            <div key={i} className="skeleton skeleton-line" style={{ height: 40 }} />
+          ))}
+        </div>
+      );
+    }
+
+    // ─── Demo ─────────────────────────────────────────────────────────
+    function SuspenseDemo() {
+      const [show, setShow] = useState(false);
+      const [key, setKey] = useState(0);
+
+      function load(fast) {
+        userResource = createResource(() => fetchUser(fast ? 500 : 2000));
+        postResource = createResource(() => fetchPosts(fast ? 800 : 3000));
+        setShow(true);
+        setKey(k => k + 1);
+      }
+
+      function reset() {
+        userResource = null;
+        postResource = null;
+        setShow(false);
+      }
+
+      return (
+        <div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            <button onClick={() => load(true)}>Load (fast: 0.5s / 0.8s)</button>
+            <button onClick={() => load(false)}>Load (slow: 2s / 3s)</button>
+            <button onClick={reset}>Reset</button>
+          </div>
+
+          {show && (
+            <div key={key}>
+              <Suspense fallback={<UserSkeleton />}>
+                <UserProfile />
+                <Suspense fallback={<PostsSkeleton />}>
+                  <PostList />
+                </Suspense>
+              </Suspense>
+            </div>
+          )}
+
+          {!show && (
+            <div style={{ color: '#555', fontSize: 13 }}>Click a Load button to trigger Suspense</div>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>14 — Suspense Internals</h1>
+          <p className="desc">
+            Suspense works via a "throw a Promise" protocol. When a component throws a Promise during render,
+            React catches it, shows the fallback, and re-renders the component when the Promise resolves.
+            This is React's mechanism for async rendering coordination.
+          </p>
+
+          <div className="layout">
+            <div className="panel" style={{ flex: 2 }}>
+              <h2>Live Suspense Demo (nested)</h2>
+              <SuspenseDemo />
+            </div>
+
+            <div className="panel" style={{ flex: 1 }}>
+              <h2>The Promise Protocol</h2>
+              <div className="flow-step">
+                <div className="step-num" style={{ background: 'rgba(248,81,73,0.2)', color: '#f85149', border: '1px solid rgba(248,81,73,0.3)' }}>1</div>
+                <div className="step-content">
+                  <div className="title" style={{ color: '#f85149' }}>Component throws a Promise</div>
+                  <div className="sub">During render, resource.read() throws a Promise (not an Error) if data isn't ready yet.</div>
+                </div>
+              </div>
+              <div className="flow-step">
+                <div className="step-num" style={{ background: 'rgba(227,179,65,0.2)', color: '#e3b341', border: '1px solid rgba(227,179,65,0.3)' }}>2</div>
+                <div className="step-content">
+                  <div className="title" style={{ color: '#e3b341' }}>React catches the Promise</div>
+                  <div className="sub">React's work loop has a try/catch. If the thrown value has a .then (is a thenable), it's treated as a Suspense trigger — not an error.</div>
+                </div>
+              </div>
+              <div className="flow-step">
+                <div className="step-num" style={{ background: 'rgba(137,180,250,0.2)', color: '#89b4fa', border: '1px solid rgba(137,180,250,0.3)' }}>3</div>
+                <div className="step-content">
+                  <div className="title" style={{ color: '#89b4fa' }}>Find nearest Suspense boundary</div>
+                  <div className="sub">React walks up the fiber tree to find the nearest &lt;Suspense&gt; component, just like error boundaries.</div>
+                </div>
+              </div>
+              <div className="flow-step">
+                <div className="step-num" style={{ background: 'rgba(168,85,247,0.2)', color: '#a855f7', border: '1px solid rgba(168,85,247,0.3)' }}>4</div>
+                <div className="step-content">
+                  <div className="title" style={{ color: '#a855f7' }}>Show fallback, attach .then()</div>
+                  <div className="sub">Suspense renders the fallback. React attaches a .then() handler to the promise to know when to retry.</div>
+                </div>
+              </div>
+              <div className="flow-step">
+                <div className="step-num" style={{ background: 'rgba(63,185,80,0.2)', color: '#3fb950', border: '1px solid rgba(63,185,80,0.3)' }}>5</div>
+                <div className="step-content">
+                  <div className="title" style={{ color: '#3fb950' }}>Promise resolves → re-render</div>
+                  <div className="sub">When the promise resolves, React schedules an update on the Suspense boundary, re-rendering the children (which now read resolved data).</div>
+                </div>
+              </div>
+
+              <div className="code" style={{ marginTop: 16 }}>
+                <div className="cm">// Simplified: how React detects Suspense vs Error</div>
+                <div><span className="kw">function</span> <span className="fn-name">handleThrow</span>(root, thrownValue) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">if</span> (</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;thrownValue !== null &amp;&amp;</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">typeof</span> thrownValue === <span className="str">'object'</span> &amp;&amp;</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">typeof</span> thrownValue.then === <span className="str">'function'</span></div>
+                <div>&nbsp;&nbsp;) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// It's a Promise → Suspense protocol</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;attachPingListener(root, thrownValue);</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;renderDidSuspend();</div>
+                <div>&nbsp;&nbsp;{'}'} <span className="kw">else</span> {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// It's an Error → Error Boundary</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;throwException(root, thrownValue);</div>
+                <div>&nbsp;&nbsp;{'}'}</div>
+                <div>{'}'}</div>
+              </div>
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>The Resource Pattern & useTransition</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div className="code">
+                  <div className="cm">// The "suspendable resource" wrapper</div>
+                  <div><span className="kw">function</span> <span className="fn-name">createResource</span>(asyncFn) {'{'}</div>
+                  <div>&nbsp;&nbsp;<span className="kw">let</span> status = <span className="str">'pending'</span>;</div>
+                  <div>&nbsp;&nbsp;<span className="kw">let</span> result;</div>
+                  <div>&nbsp;&nbsp;<span className="kw">const</span> promise = asyncFn().then(</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;data =&gt; {'{'} status = <span className="str">'resolved'</span>; result = data; {'}'},</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;err  =&gt; {'{'} status = <span className="str">'rejected'</span>; result = err; {'}'}</div>
+                  <div>&nbsp;&nbsp;);</div>
+                  <div>&nbsp;&nbsp;<span className="kw">return</span> {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="fn-name">read</span>() {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">if</span> (status === <span className="str">'pending'</span>)</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">throw</span> promise; <span className="cm">// ← suspend!</span></div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">if</span> (status === <span className="str">'rejected'</span>)</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">throw</span> result; <span className="cm">// ← error boundary!</span></div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> result;</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;{'}'}</div>
+                  <div>&nbsp;&nbsp;{'}'};</div>
+                  <div>{'}'}</div>
+                </div>
+                <div>
+                  <div className="explain">
+                    <strong style={{ color: '#89b4fa' }}>useTransition + Suspense</strong><br/><br/>
+                    Without <code>useTransition</code>: navigating to a new page that suspends immediately
+                    shows the fallback — a jarring flash of skeleton content.<br/><br/>
+                    With <code>useTransition</code>: React keeps the current UI visible while loading
+                    the next page. The transition is "non-urgent" — React can prepare the new
+                    subtree in the background.<br/><br/>
+                    <div style={{ fontFamily: 'monospace', fontSize: 11, background: '#0d1117', padding: 10, borderRadius: 6, lineHeight: 1.8 }}>
+                      <span style={{ color: '#cba6f7' }}>const</span> [isPending, startTransition] = useTransition();<br/>
+                      <br/>
+                      startTransition(() =&gt; {'{'}<br/>
+                      &nbsp;&nbsp;<span style={{ color: '#6c7086' }}>// Navigate — may suspend, but</span><br/>
+                      &nbsp;&nbsp;<span style={{ color: '#6c7086' }}>// current UI stays visible</span><br/>
+                      &nbsp;&nbsp;setPage(<span style={{ color: '#a6e3a1' }}>'profile'</span>);<br/>
+                      {'}'});
+                    </div>
+                  </div>
+                  <div className="explain" style={{ marginTop: 10 }}>
+                    <strong style={{ color: '#f9e2af' }}>Real libraries: React Query, SWR</strong><br/><br/>
+                    React Query / SWR implement this resource pattern internally.
+                    <code>useSuspenseQuery</code> throws a promise if data isn't cached yet.
+                    Once cached (resolved), subsequent reads are synchronous — no suspension.<br/><br/>
+                    This enables <strong>render-as-you-fetch</strong>: start fetching before rendering,
+                    then read (possibly suspend) during render. Much better UX than fetch-on-render.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

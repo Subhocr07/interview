@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>15 - Concurrent Mode & Time Slicing</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .num { color: #fab387; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    input[type="text"] { background: #0d1117; border: 1px solid #333; color: #e0e0e0; padding: 8px 12px; border-radius: 6px; font-size: 14px; width: 100%; margin-bottom: 10px; }
+    input[type="text"]:focus { outline: none; border-color: #4f46e5; }
+    .item-grid { display: flex; flex-wrap: wrap; gap: 4; margin-top: 10px; max-height: 200px; overflow-y: auto; }
+    .item-chip { padding: 4px 10px; border-radius: 20px; font-size: 11px; background: #1a1a2a; border: 1px solid #4f46e5; color: #89b4fa; }
+    .item-chip.match { background: rgba(63,185,80,0.2); border-color: #3fb950; color: #3fb950; }
+    .lane-diagram { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .lane { display: flex; align-items: center; gap: 10px; }
+    .lane-label { font-size: 11px; color: #888; width: 120px; flex-shrink: 0; }
+    .lane-bar { height: 20px; border-radius: 4px; display: flex; align-items: center; padding: 0 8px; font-size: 10px; font-weight: 700; flex: 1; }
+    .lane-sync { background: rgba(248,81,73,0.25); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+    .lane-transition { background: rgba(137,180,250,0.15); color: #89b4fa; border: 1px solid rgba(137,180,250,0.3); }
+    .lane-deferred { background: rgba(168,85,247,0.15); color: #a855f7; border: 1px solid rgba(168,85,247,0.3); }
+    .lane-idle { background: rgba(63,185,80,0.1); color: #3fb950; border: 1px solid rgba(63,185,80,0.2); }
+    .perf-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+    .perf-box { border-radius: 8px; padding: 12px; font-size: 12px; }
+    .perf-bad { background: #1a0d0d; border: 1px solid #f85149; }
+    .perf-good { background: #0d1a0d; border: 1px solid #3fb950; }
+    .perf-box h4 { margin-bottom: 8px; font-size: 13px; }
+    .perf-bad h4 { color: #f85149; }
+    .perf-good h4 { color: #3fb950; }
+    .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #333; border-top-color: #89b4fa; border-radius: 50%; animation: spin 0.6s linear infinite; margin-left: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useTransition, useDeferredValue, useRef, useMemo } = React;
+
+    // ─── Generate 2000 items ──────────────────────────────────────────
+    const ALL_ITEMS = Array.from({ length: 2000 }, (_, i) => ({
+      id: i,
+      label: `Item ${i.toString().padStart(4, '0')} — ${Math.random().toString(36).slice(2, 8)}`
+    }));
+
+    // ─── Without transition demo ──────────────────────────────────────
+    function WithoutTransitionDemo() {
+      const [query, setQuery] = useState('');
+      const [filtered, setFiltered] = useState(ALL_ITEMS.slice(0, 50));
+
+      function handleChange(e) {
+        const val = e.target.value;
+        setQuery(val);
+        // This is synchronous — blocks input for duration of expensive filter
+        const q = val.toLowerCase();
+        setFiltered(ALL_ITEMS.filter(item => item.label.toLowerCase().includes(q)));
+      }
+
+      return (
+        <div>
+          <p style={{ fontSize: 12, color: '#f85149', marginBottom: 8 }}>
+            Type fast — notice lag! Both input + list update synchronously.
+          </p>
+          <input type="text" value={query} onChange={handleChange} placeholder="Filter 2000 items (no transition)..." />
+          <div style={{ fontSize: 11, color: '#888' }}>Showing {filtered.length} results</div>
+          <div className="item-grid">
+            {filtered.slice(0, 100).map(item => (
+              <div key={item.id} className={`item-chip ${query && item.label.toLowerCase().includes(query.toLowerCase()) ? 'match' : ''}`}>
+                {item.label.slice(0, 20)}
+              </div>
+            ))}
+            {filtered.length > 100 && (
+              <div style={{ fontSize: 11, color: '#555', padding: '4px 10px' }}>+{filtered.length - 100} more</div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── With useTransition demo ──────────────────────────────────────
+    function WithTransitionDemo() {
+      const [query, setQuery] = useState('');
+      const [isPending, startTransition] = useTransition();
+      const [filtered, setFiltered] = useState(ALL_ITEMS.slice(0, 50));
+
+      function handleChange(e) {
+        const val = e.target.value;
+        setQuery(val); // urgent — input value updates immediately
+        startTransition(() => {
+          // non-urgent — list update can be interrupted
+          const q = val.toLowerCase();
+          setFiltered(ALL_ITEMS.filter(item => item.label.toLowerCase().includes(q)));
+        });
+      }
+
+      return (
+        <div>
+          <p style={{ fontSize: 12, color: '#3fb950', marginBottom: 8 }}>
+            Input stays responsive! List update is non-urgent (transition).
+            {isPending && <span className="spinner" />}
+          </p>
+          <input type="text" value={query} onChange={handleChange} placeholder="Filter 2000 items (with transition)..." />
+          <div style={{ fontSize: 11, color: '#888' }}>
+            Showing {filtered.length} results
+            {isPending && <span style={{ color: '#89b4fa', marginLeft: 8 }}>Updating...</span>}
+          </div>
+          <div className="item-grid">
+            {filtered.slice(0, 100).map(item => (
+              <div key={item.id} className={`item-chip ${query && item.label.toLowerCase().includes(query.toLowerCase()) ? 'match' : ''}`}>
+                {item.label.slice(0, 20)}
+              </div>
+            ))}
+            {filtered.length > 100 && (
+              <div style={{ fontSize: 11, color: '#555', padding: '4px 10px' }}>+{filtered.length - 100} more</div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── useDeferredValue demo ────────────────────────────────────────
+    function DeferredValueDemo() {
+      const [query, setQuery] = useState('');
+      const deferredQuery = useDeferredValue(query);
+      const isStale = query !== deferredQuery;
+
+      const filtered = useMemo(() => {
+        const q = deferredQuery.toLowerCase();
+        return ALL_ITEMS.filter(item => item.label.toLowerCase().includes(q));
+      }, [deferredQuery]);
+
+      return (
+        <div>
+          <p style={{ fontSize: 12, color: '#a855f7', marginBottom: 8 }}>
+            useDeferredValue defers the query used for filtering, keeping input snappy.
+          </p>
+          <input
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Type to filter (useDeferredValue)..."
+          />
+          <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>
+            input: "{query}" | deferred: "{deferredQuery}" | {isStale ? '⏳ stale' : '✓ fresh'}
+          </div>
+          <div className="item-grid" style={{ opacity: isStale ? 0.6 : 1, transition: 'opacity 0.2s' }}>
+            {filtered.slice(0, 60).map(item => (
+              <div key={item.id} className="item-chip match">
+                {item.label.slice(0, 20)}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>15 — Concurrent Mode & Time Slicing</h1>
+          <p className="desc">
+            React 18 Concurrent Mode allows React to interrupt, pause, and resume rendering.
+            <code>startTransition</code> marks updates as non-urgent, keeping the UI responsive.
+            <code>useDeferredValue</code> lets React show stale content while computing fresh content.
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>Without Transition (Blocking)</h2>
+              <WithoutTransitionDemo />
+            </div>
+            <div className="panel">
+              <h2>With useTransition (Non-blocking)</h2>
+              <WithTransitionDemo />
+            </div>
+            <div className="panel">
+              <h2>useDeferredValue</h2>
+              <DeferredValueDemo />
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>Priority Lanes — How React Schedules Work</h2>
+              <div className="lane-diagram">
+                {[
+                  { label: 'SyncLane (1)', bar: 'lane-sync', desc: 'Highest priority. flushSync, discrete events (click, input). Must run synchronously, cannot be interrupted.' },
+                  { label: 'InputContinuousLane (4)', bar: 'lane-sync', desc: 'Continuous input (scroll, drag, mousemove). Urgent but can be batched slightly.' },
+                  { label: 'DefaultLane (16)', bar: 'lane-transition', desc: 'Normal setState updates. Batched in React 18 via scheduler microtask.' },
+                  { label: 'TransitionLane (64-4096)', bar: 'lane-transition', desc: 'startTransition updates. Non-urgent. Can be interrupted by higher-priority work.' },
+                  { label: 'RetryLane', bar: 'lane-deferred', desc: 'Suspense retry — re-render after promise resolves.' },
+                  { label: 'IdleLane (536870912)', bar: 'lane-idle', desc: 'Lowest priority. Work that runs only when browser is idle (useDeferredValue stale renders).' },
+                ].map((item, i) => (
+                  <div key={i} className="lane">
+                    <div className="lane-label">{item.label}</div>
+                    <div className={`lane-bar ${item.bar}`}>{item.desc}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+                <div className="code">
+                  <div className="cm">// Time slicing: React yields to browser every ~5ms</div>
+                  <div><span className="kw">function</span> <span className="fn-name">workLoopConcurrent</span>() {'{'}</div>
+                  <div>&nbsp;&nbsp;<span className="kw">while</span> (workInProgress !== null && !shouldYield()) {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;performUnitOfWork(workInProgress);</div>
+                  <div>&nbsp;&nbsp;{'}'}</div>
+                  <div>{'}'}</div>
+                  <br/>
+                  <div className="cm">// Scheduler checks elapsed time</div>
+                  <div><span className="kw">function</span> <span className="fn-name">shouldYieldToHost</span>() {'{'}</div>
+                  <div>&nbsp;&nbsp;<span className="kw">const</span> elapsed = getCurrentTime() - startTime;</div>
+                  <div>&nbsp;&nbsp;<span className="kw">return</span> elapsed &gt;= <span className="num">5</span>; <span className="cm">// 5ms frame slice</span></div>
+                  <div>{'}'}</div>
+                  <br/>
+                  <div className="cm">// If shouldYield() is true, React schedules</div>
+                  <div className="cm">// continuation via MessageChannel postMessage</div>
+                  <div className="cm">// (not setTimeout — avoids 4ms minimum delay)</div>
+                </div>
+                <div className="explain" style={{ marginTop: 0 }}>
+                  <strong style={{ color: '#89b4fa' }}>startTransition vs useDeferredValue</strong><br/><br/>
+                  <strong>startTransition</strong>: wraps the update itself. You control what's urgent vs not.
+                  Good for user-initiated navigation or explicit "search" actions.<br/><br/>
+                  <strong>useDeferredValue</strong>: defers a <em>value</em> — React renders with the old value first
+                  (instant commit), then re-renders in background with the new value.
+                  Good when you don't control the state setter (e.g., you receive a prop).<br/><br/>
+                  <strong>Key difference:</strong> startTransition wraps the setter; useDeferredValue wraps the value.
+                  Both produce the same effect but serve different code organization needs.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

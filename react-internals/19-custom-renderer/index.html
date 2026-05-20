@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>19 - Custom Renderer & Host Config</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .num { color: #fab387; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .canvas-demo { background: #0d1117; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+    .json-tree-output { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.6; max-height: 300px; overflow-y: auto; }
+    .jt-key { color: #89b4fa; }
+    .jt-val { color: #a6e3a1; }
+    .jt-type { color: #a855f7; }
+    .jt-num { color: #fab387; }
+    .arch-row { display: flex; gap: 16px; align-items: center; margin-bottom: 10px; font-size: 12px; }
+    .arch-box { border: 1px solid #333; border-radius: 6px; padding: 8px 14px; text-align: center; font-size: 11px; }
+    .arch-arrow { color: #555; font-size: 18px; }
+    .renderer-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+    .renderer-table th { background: #1a1a1a; padding: 6px 10px; text-align: left; color: #888; border-bottom: 1px solid #333; }
+    .renderer-table td { padding: 7px 10px; border-bottom: 1px solid #222; vertical-align: top; }
+    .renderer-table tr:last-child td { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ─── Simulated custom renderer: "JSON Tree Renderer" ─────────────
+    // A mini React renderer that outputs a plain JS object tree
+    // instead of DOM nodes. This shows what react-reconciler does.
+
+    class JSONNode {
+      constructor(type, props) {
+        this.type = type;
+        this.props = { ...props };
+        this.children = [];
+      }
+    }
+
+    class JSONRenderer {
+      constructor() {
+        this.root = null;
+        this.listeners = [];
+      }
+
+      // Equivalent to ReactDOM.createRoot
+      createContainer() {
+        const container = new JSONNode('root', {});
+        this.root = container;
+        return container;
+      }
+
+      // Equivalent to completeWork for host components
+      createInstance(type, props) {
+        const { children, ...rest } = props;
+        return new JSONNode(type, rest);
+      }
+
+      createTextInstance(text) {
+        return new JSONNode('text', { value: text });
+      }
+
+      // Equivalent to appendChildToContainer
+      appendChildToContainer(container, child) {
+        container.children.push(child);
+        this.notify();
+      }
+
+      appendChild(parent, child) {
+        parent.children.push(child);
+      }
+
+      removeChild(parent, child) {
+        const idx = parent.children.indexOf(child);
+        if (idx !== -1) parent.children.splice(idx, 1);
+        this.notify();
+      }
+
+      // Update props on existing instance
+      prepareUpdate(instance, type, oldProps, newProps) {
+        return newProps;
+      }
+
+      commitUpdate(instance, updatePayload, type) {
+        const { children, ...rest } = updatePayload;
+        Object.assign(instance.props, rest);
+        this.notify();
+      }
+
+      notify() {
+        this.listeners.forEach(l => l(JSON.parse(JSON.stringify(this.root))));
+      }
+
+      subscribe(fn) {
+        this.listeners.push(fn);
+        return () => { this.listeners = this.listeners.filter(l => l !== fn); };
+      }
+    }
+
+    const renderer = new JSONRenderer();
+    const container = renderer.createContainer();
+
+    // Simulate rendering a component tree into our JSON renderer
+    function simulateRender(components) {
+      container.children = [];
+      function renderNode(spec, parent) {
+        const instance = renderer.createInstance(spec.type, spec.props || {});
+        if (spec.text) {
+          const textNode = renderer.createTextInstance(spec.text);
+          instance.children.push(textNode);
+        }
+        if (spec.children) {
+          spec.children.forEach(child => renderNode(child, instance));
+        }
+        parent.children.push(instance);
+      }
+      components.forEach(c => renderNode(c, container));
+      renderer.notify();
+    }
+
+    // ─── JSON Tree Display ────────────────────────────────────────────
+    function JSONTreeView({ node, depth = 0 }) {
+      if (!node) return null;
+      const indent = '  '.repeat(depth);
+      return (
+        <div style={{ paddingLeft: depth > 0 ? 16 : 0, borderLeft: depth > 0 ? '1px dashed #2a2a2a' : 'none', marginLeft: depth > 0 ? 8 : 0 }}>
+          <div>
+            <span className="jt-type">{'{'}</span>
+            <span className="jt-key"> type</span>: <span className="jt-val">"{node.type}"</span>
+            {Object.keys(node.props || {}).length > 0 && (
+              <span>, <span className="jt-key">props</span>: {'{'}{Object.entries(node.props).map(([k,v]) => (
+                <span key={k}> <span className="jt-key">{k}</span>: <span className="jt-val">"{v}"</span></span>
+              ))}{' }'}</span>
+            )}
+            <span className="jt-type">{'}'}</span>
+          </div>
+          {node.children?.map((child, i) => (
+            <JSONTreeView key={i} node={child} depth={depth + 1} />
+          ))}
+        </div>
+      );
+    }
+
+    function CustomRendererDemo() {
+      const [tree, setTree] = useState(null);
+      const [scenario, setScenario] = useState(null);
+
+      useEffect(() => {
+        const unsub = renderer.subscribe(t => setTree(t));
+        return unsub;
+      }, []);
+
+      const scenarios = {
+        simple: [
+          { type: 'View', props: { style: 'flex' }, children: [
+            { type: 'Text', props: { size: '24' }, text: 'Hello World' },
+            { type: 'Button', props: { color: 'blue' }, text: 'Click Me' },
+          ]},
+        ],
+        list: [
+          { type: 'ScrollView', props: {}, children: [
+            { type: 'Text', props: { weight: 'bold' }, text: 'Items:' },
+            ...['Apple', 'Banana', 'Cherry'].map(name => ({
+              type: 'ListItem', props: { key: name }, text: name
+            }))
+          ]},
+        ],
+        nested: [
+          { type: 'Page', props: {}, children: [
+            { type: 'Header', props: {}, children: [
+              { type: 'Text', props: { size: '18' }, text: 'My App' },
+            ]},
+            { type: 'Content', props: {}, children: [
+              { type: 'Card', props: { elevation: '2' }, children: [
+                { type: 'Text', props: {}, text: 'Card content' },
+              ]},
+            ]},
+          ]},
+        ],
+      };
+
+      function render(key) {
+        setScenario(key);
+        simulateRender(scenarios[key]);
+      }
+
+      return (
+        <div>
+          <p style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>
+            Each button renders a React tree into our custom JSON renderer (simulating React Native, Ink, etc.)
+          </p>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            <button onClick={() => render('simple')}>Simple Tree</button>
+            <button onClick={() => render('list')}>List</button>
+            <button onClick={() => render('nested')}>Nested</button>
+            <button onClick={() => { container.children = []; renderer.notify(); setScenario(null); }}>Clear</button>
+          </div>
+          <div className="json-tree-output">
+            {tree ? <JSONTreeView node={tree} /> : (
+              <div style={{ color: '#555' }}>Click a button to render a tree...</div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>19 — Custom Renderer & Host Config</h1>
+          <p className="desc">
+            React's reconciler is renderer-agnostic. <code>react-reconciler</code> does all the fiber work —
+            you plug in a "host config" that tells it how to create and update platform-specific nodes.
+            This is how React Native, React Three Fiber, Ink (terminal), and others work.
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>Custom JSON Renderer Demo</h2>
+              <CustomRendererDemo />
+
+              <div className="explain">
+                <strong style={{ color: '#89b4fa' }}>What this simulates</strong><br/><br/>
+                In real custom renderers (like React Native), the "DOM nodes" are native views —
+                instead of <code>document.createElement('div')</code>, the host config calls
+                <code>UIManager.createView('RCTView', ...)</code>.<br/><br/>
+                Our JSON renderer creates plain JS objects. The reconciler doesn't care —
+                it just calls <code>createInstance</code>, <code>appendChild</code>, etc.
+              </div>
+            </div>
+
+            <div className="panel">
+              <h2>Host Config API</h2>
+              <div className="code">
+                <div className="cm">// react-reconciler host config (simplified)</div>
+                <div><span className="kw">const</span> hostConfig = {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="cm">// Create a platform node</span></div>
+                <div>&nbsp;&nbsp;<span className="fn-name">createInstance</span>(type, props, rootContainer) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> document.createElement(type);</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// OR: UIManager.createView() [React Native]</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// OR: new THREE.Mesh() [R3F]</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// OR: new JSONNode() [our demo]</span></div>
+                <div>&nbsp;&nbsp;{'}'},</div>
+                <br/>
+                <div>&nbsp;&nbsp;<span className="fn-name">createTextInstance</span>(text) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> document.createTextNode(text);</div>
+                <div>&nbsp;&nbsp;{'}'},</div>
+                <br/>
+                <div>&nbsp;&nbsp;<span className="fn-name">appendChild</span>(parent, child) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;parent.appendChild(child);</div>
+                <div>&nbsp;&nbsp;{'}'},</div>
+                <br/>
+                <div>&nbsp;&nbsp;<span className="fn-name">appendChildToContainer</span>(container, child) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;container.appendChild(child);</div>
+                <div>&nbsp;&nbsp;{'}'},</div>
+                <br/>
+                <div>&nbsp;&nbsp;<span className="fn-name">prepareUpdate</span>(instance, type, oldProps, newProps) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Compute diff of props, return update payload</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> computeDiff(oldProps, newProps);</div>
+                <div>&nbsp;&nbsp;{'}'},</div>
+                <br/>
+                <div>&nbsp;&nbsp;<span className="fn-name">commitUpdate</span>(instance, payload, type) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Apply the diff to the platform node</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;applyDiff(instance, payload);</div>
+                <div>&nbsp;&nbsp;{'}'},</div>
+                <br/>
+                <div>&nbsp;&nbsp;<span className="fn-name">removeChild</span>(parent, child) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;parent.removeChild(child);</div>
+                <div>&nbsp;&nbsp;{'}'},</div>
+                <br/>
+                <div>&nbsp;&nbsp;<span className="cm">// Scheduling: tells React how to schedule work</span></div>
+                <div>&nbsp;&nbsp;isPrimaryRenderer: <span className="kw">true</span>,</div>
+                <div>&nbsp;&nbsp;supportsMutation: <span className="kw">true</span>,  <span className="cm">// DOM-like</span></div>
+                <div>&nbsp;&nbsp;supportsPersistence: <span className="kw">false</span>, <span className="cm">// immutable tree</span></div>
+                <div>{'}'}</div>
+                <br/>
+                <div><span className="kw">const</span> MyRenderer = reconciler(hostConfig);</div>
+              </div>
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>React Renderers in the Wild</h2>
+              <table className="renderer-table">
+                <thead>
+                  <tr><th>Renderer</th><th>Target Platform</th><th>createInstance() creates</th><th>Use case</th></tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['react-dom', 'Web browser', 'document.createElement()', 'Web apps, the default'],
+                    ['react-native', 'iOS / Android', 'UIManager.createView() [native bridge]', 'Mobile apps via native views'],
+                    ['react-three-fiber (R3F)', 'WebGL / THREE.js', 'new THREE.Mesh(), new THREE.Light(), etc.', '3D graphics in React'],
+                    ['ink', 'Terminal (Node.js)', 'Text layout nodes → blessed/yoga', 'CLI apps with React components'],
+                    ['react-pdf', 'PDF documents', 'PDFKit document objects', 'Generate PDFs declaratively'],
+                    ['react-blessed', 'Terminal', 'blessed library widgets', 'Terminal UI components'],
+                    ['react-canvas', 'HTML Canvas', 'Canvas drawing commands', '2D canvas rendering with React'],
+                    ['react-test-renderer', 'JSON tree (testing)', 'Plain JS objects', 'Testing without browser/native'],
+                  ].map(([renderer, platform, creates, use]) => (
+                    <tr key={renderer}>
+                      <td><code>{renderer}</code></td>
+                      <td style={{ color: '#89b4fa' }}>{platform}</td>
+                      <td style={{ color: '#a6e3a1', fontFamily: 'monospace', fontSize: 11 }}>{creates}</td>
+                      <td style={{ color: '#888' }}>{use}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+                <div className="explain" style={{ marginTop: 0 }}>
+                  <strong style={{ color: '#89b4fa' }}>React reconciler architecture</strong><br/><br/>
+                  The reconciler (fiber tree, diffing, work loop) is <strong>renderer-independent</strong>.
+                  It's in the <code>react-reconciler</code> package.<br/><br/>
+                  Each platform provides a host config that maps abstract operations
+                  (createInstance, appendChild, removeChild) to platform-specific APIs.<br/><br/>
+                  This is why React's fiber diffing works the same whether you're rendering
+                  to the DOM, a canvas, or a terminal.
+                </div>
+                <div className="explain" style={{ marginTop: 0 }}>
+                  <strong style={{ color: '#3fb950' }}>Mutation vs Persistence mode</strong><br/><br/>
+                  <strong>Mutation mode</strong> (DOM, React Native): nodes are mutated in-place.
+                  commitUpdate changes properties on the existing instance.<br/><br/>
+                  <strong>Persistence mode</strong> (some renderers): nodes are immutable.
+                  When something changes, create a new instance with the new props
+                  and replace the old one. Functional update model at the host level.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

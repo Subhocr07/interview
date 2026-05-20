@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>10 - Portals Internals</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 280px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .tree-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .tree-box { background: #111; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; }
+    .tree-box h4 { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 10px; }
+    .tree-line { line-height: 2; padding-left: 10px; }
+    .t-react { color: #89b4fa; }
+    .t-dom { color: #3fb950; }
+    .t-portal { color: #a855f7; }
+    .t-overflow { color: #f85149; font-size: 10px; }
+    .demo-area { background: #111; border-radius: 8px; overflow: hidden; position: relative; }
+    .overflow-box { overflow: hidden; border: 2px dashed #f85149; border-radius: 6px; padding: 14px; margin: 14px; position: relative; }
+    .overflow-box .label { font-size: 11px; color: #f85149; margin-bottom: 8px; }
+    .overflow-box .tooltip { position: absolute; background: #1a1a1a; border: 1px solid #4f46e5; border-radius: 6px; padding: 8px 12px; font-size: 12px; white-space: nowrap; color: #cdd6f4; pointer-events: none; z-index: 10; }
+    .portal-container { border: 2px solid #a855f7; border-radius: 6px; padding: 10px; margin: 14px; }
+    .portal-container .label { font-size: 11px; color: #a855f7; margin-bottom: 4px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+    .modal { background: #1a1a1a; border: 1px solid #4f46e5; border-radius: 10px; padding: 28px; min-width: 300px; }
+    .modal h3 { color: #89b4fa; margin-bottom: 10px; }
+    .modal p { font-size: 13px; color: #888; line-height: 1.6; margin-bottom: 14px; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .hl { color: #f9e2af; }
+    .event-log { background: #0d1117; border-radius: 6px; padding: 10px; font-size: 11px; font-family: monospace; margin-top: 10px; max-height: 120px; overflow-y: auto; }
+    .log-portal { color: #a855f7; }
+    .log-parent { color: #89b4fa; }
+    .log-info { color: #666; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="modal-root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    function ModalPortal({ isOpen, onClose }) {
+      if (!isOpen) return null;
+      return ReactDOM.createPortal(
+        <div className="backdrop" onClick={onClose}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>Portal Modal</h3>
+            <p>
+              This modal is rendered into <code>#modal-root</code> (at the bottom of body),
+              but in React's fiber tree, it's a child of the button that opened it.
+              Events bubble through the React tree, not the DOM tree.
+            </p>
+            <button onClick={onClose}>Close</button>
+          </div>
+        </div>,
+        document.getElementById('modal-root')
+      );
+    }
+
+    function EventBubblingDemo() {
+      const [log, setLog] = useState([]);
+
+      function addLog(msg, type) {
+        setLog(prev => [{ msg, type }, ...prev].slice(0, 10));
+      }
+
+      return (
+        <div
+          style={{ background: '#1a1a2e', border: '1px solid #4f46e5', borderRadius: 8, padding: 14 }}
+          onClick={() => addLog('Parent div onClick fired! (bubble from portal)', 'parent')}
+        >
+          <div style={{ fontSize: 12, color: '#89b4fa', marginBottom: 8 }}>Parent div — listens for clicks</div>
+          {ReactDOM.createPortal(
+            <div style={{ background: '#2a1a3a', border: '1px dashed #a855f7', borderRadius: 6, padding: 10, marginTop: 8 }}>
+              <div style={{ fontSize: 11, color: '#a855f7', marginBottom: 6 }}>Portal child (DOM: in #modal-root, React: child of parent div)</div>
+              <button onClick={() => addLog('Portal button clicked → bubbles to React parent', 'portal')}>
+                Click me (portal button)
+              </button>
+            </div>,
+            document.getElementById('modal-root')
+          )}
+          <div className="event-log" style={{ marginTop: 10 }}>
+            {log.length === 0 && <div className="log-info">Click portal button to see event bubbling through React tree</div>}
+            {log.map((e, i) => (
+              <div key={i} className={e.type === 'portal' ? 'log-portal' : 'log-parent'}>{e.msg}</div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [modalOpen, setModalOpen] = useState(false);
+
+      return (
+        <div>
+          <h1>10 — Portals Internals</h1>
+          <p className="desc">
+            <code>ReactDOM.createPortal(children, domNode)</code> renders children into a different DOM node,
+            while keeping them in the same React fiber tree. This has two important consequences:
+            Context still works, and events still bubble through the React tree (not the DOM tree).
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>React Tree vs DOM Tree</h2>
+              <div className="tree-compare">
+                <div className="tree-box">
+                  <h4>React Fiber Tree</h4>
+                  <div className="tree-line">
+                    <div className="t-react">App</div>
+                    <div className="t-react">&nbsp;└─ div#root</div>
+                    <div className="t-react">&nbsp;&nbsp;&nbsp;└─ Parent</div>
+                    <div className="t-portal">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ Modal (portal)</div>
+                    <div className="t-portal">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ div.backdrop</div>
+                    <div className="t-portal">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ div.modal</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 8 }}>Events bubble through this tree ↑</div>
+                </div>
+                <div className="tree-box">
+                  <h4>Real DOM Tree</h4>
+                  <div className="tree-line">
+                    <div className="t-dom">body</div>
+                    <div className="t-dom">&nbsp;├─ div#root</div>
+                    <div className="t-react">&nbsp;│&nbsp;&nbsp;└─ Parent (DOM)</div>
+                    <div className="t-dom">&nbsp;└─ div#modal-root</div>
+                    <div className="t-portal">&nbsp;&nbsp;&nbsp;&nbsp;└─ div.backdrop</div>
+                    <div className="t-portal">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─ div.modal</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#888', marginTop: 8 }}>DOM siblings ← portal is here</div>
+                </div>
+              </div>
+
+              <div className="code" style={{ marginTop: 14 }}>
+                <div className="cm">// ReactDOM.createPortal internals</div>
+                <div><span className="kw">function</span> <span className="fn-name">createPortal</span>(children, container, key) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">return</span> {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;$$typeof: REACT_PORTAL_TYPE, <span className="cm">// special symbol</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;key: key == null ? null : String(key),</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;children,</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;containerInfo: container, <span className="cm">// target DOM node</span></div>
+                <div>&nbsp;&nbsp;{'}'};</div>
+                <div>{'}'}</div>
+                <br/>
+                <div className="cm">// During reconciliation, the fiber is created normally</div>
+                <div className="cm">// but stateNode points to the portal container</div>
+                <div className="cm">// During commit, React inserts DOM into containerInfo</div>
+                <div className="cm">// instead of the parent's DOM node</div>
+              </div>
+
+              <button onClick={() => setModalOpen(true)} style={{ marginTop: 14 }}>Open Portal Modal</button>
+              <ModalPortal isOpen={modalOpen} onClose={() => setModalOpen(false)} />
+            </div>
+
+            <div className="panel">
+              <h2>Event Bubbling Through React Tree</h2>
+              <p style={{ fontSize: 12, color: '#888', marginBottom: 12 }}>
+                Even though the portal DOM is in <code>#modal-root</code> (outside <code>#root</code>),
+                events bubble through the <span style={{ color: '#a855f7' }}>React fiber tree</span> — so the parent's onClick handler fires.
+              </p>
+              <EventBubblingDemo />
+
+              <div className="explain">
+                <strong style={{ color: '#89b4fa' }}>Why portals still bubble in React tree</strong><br/><br/>
+                React uses event delegation on the root container. When the portal button is clicked,
+                the native event propagates through the <span className="hl">DOM</span> (from modal-root → body → no cross to #root).
+                BUT React intercepts at the portal container too — and simulates bubbling
+                through the <span className="hl">fiber tree</span> (portal → Parent → App).<br/><br/>
+                <strong>Practical consequence:</strong> A parent's <code>onClick</code> will fire when a portal inside it is clicked —
+                even though in the DOM they're siblings. This is intentional: portals are logically children, just visually positioned elsewhere.<br/><br/>
+                <strong>Use cases for portals:</strong><br/>
+                • Modals (avoid z-index/overflow:hidden clipping)<br/>
+                • Tooltips (positioned relative to viewport)<br/>
+                • Notifications / toast messages<br/>
+                • Context menus<br/>
+                • Dropdown menus that overflow parent
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>React Internals — Deep Dive</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
+    h1 { font-size: 26px; color: #fff; margin-bottom: 6px; }
+    .subtitle { color: #555; font-size: 14px; margin-bottom: 36px; line-height: 1.6; }
+    .subtitle a { color: #89b4fa; text-decoration: none; }
+    .subtitle a:hover { text-decoration: underline; }
+    .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #555; margin-bottom: 14px; margin-top: 32px; border-bottom: 1px solid #222; padding-bottom: 8px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-bottom: 10px; }
+    .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 18px; text-decoration: none; color: inherit; display: block; transition: border-color 0.15s, background 0.15s, transform 0.1s; position: relative; overflow: hidden; }
+    .card:hover { border-color: #444; background: #212121; transform: translateY(-1px); }
+    .card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+    .card.cat-core::before { background: linear-gradient(90deg, #89b4fa, #4f46e5); }
+    .card.cat-hooks::before { background: linear-gradient(90deg, #a855f7, #7c3aed); }
+    .card.cat-events::before { background: linear-gradient(90deg, #f9e2af, #e3b341); }
+    .card.cat-advanced::before { background: linear-gradient(90deg, #3fb950, #238636); }
+    .card.cat-concurrent::before { background: linear-gradient(90deg, #f38ba8, #f85149); }
+    .card.cat-platform::before { background: linear-gradient(90deg, #fab387, #e05a00); }
+    .card-num { font-size: 11px; color: #444; font-family: monospace; margin-bottom: 6px; }
+    .card-title { font-size: 15px; font-weight: 600; color: #fff; margin-bottom: 6px; }
+    .card-desc { font-size: 12px; color: #666; line-height: 1.6; margin-bottom: 10px; }
+    .tags { display: flex; flex-wrap: wrap; gap: 5px; }
+    .tag { font-size: 10px; padding: 2px 8px; border-radius: 20px; }
+    .tag-blue { background: rgba(137,180,250,0.12); color: #89b4fa; }
+    .tag-purple { background: rgba(168,85,247,0.12); color: #a855f7; }
+    .tag-yellow { background: rgba(249,226,175,0.12); color: #f9e2af; }
+    .tag-green { background: rgba(63,185,80,0.12); color: #3fb950; }
+    .tag-red { background: rgba(248,81,73,0.12); color: #f85149; }
+    .tag-orange { background: rgba(250,179,135,0.12); color: #fab387; }
+    .legend { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 32px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #666; }
+    .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .back-link { display: inline-flex; align-items: center; gap: 6px; color: #555; font-size: 13px; text-decoration: none; margin-bottom: 24px; }
+    .back-link:hover { color: #89b4fa; }
+    .interview-questions { background: #111; border: 1px solid #2a2a2a; border-radius: 10px; padding: 20px; margin-top: 32px; }
+    .interview-questions h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .q-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+    .q-item { background: #1a1a1a; border-radius: 6px; padding: 10px 14px; font-size: 12px; color: #888; line-height: 1.5; border-left: 3px solid #333; }
+    .q-item.cat-core { border-left-color: #89b4fa; }
+    .q-item.cat-hooks { border-left-color: #a855f7; }
+    .q-item.cat-events { border-left-color: #f9e2af; }
+    .q-item.cat-advanced { border-left-color: #3fb950; }
+    .q-item.cat-concurrent { border-left-color: #f85149; }
+    .q-item.cat-platform { border-left-color: #fab387; }
+  </style>
+</head>
+<body>
+  <a href="../index.html" class="back-link">← Back to Machine Coding Projects</a>
+
+  <h1>⚛ React Internals — Deep Dive</h1>
+  <p class="subtitle">
+    19 interactive projects covering React's internal architecture at maximum depth.<br/>
+    Each project includes working demos, internal implementation code, and interview-level explanations.
+    Open directly in any browser — no build step required.
+  </p>
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:linear-gradient(90deg,#89b4fa,#4f46e5)"></div>Core Architecture</div>
+    <div class="legend-item"><div class="legend-dot" style="background:linear-gradient(90deg,#a855f7,#7c3aed)"></div>Hooks Internals</div>
+    <div class="legend-item"><div class="legend-dot" style="background:linear-gradient(90deg,#f9e2af,#e3b341)"></div>Events & Portals</div>
+    <div class="legend-item"><div class="legend-dot" style="background:linear-gradient(90deg,#3fb950,#238636)"></div>Advanced Patterns</div>
+    <div class="legend-item"><div class="legend-dot" style="background:linear-gradient(90deg,#f38ba8,#f85149)"></div>Concurrent Mode</div>
+    <div class="legend-item"><div class="legend-dot" style="background:linear-gradient(90deg,#fab387,#e05a00)"></div>Platform & Rendering</div>
+  </div>
+
+  <div class="section-title">Core Architecture</div>
+  <div class="grid">
+    <a href="01-virtual-dom/index.html" class="card cat-core">
+      <div class="card-num">01</div>
+      <div class="card-title">Virtual DOM</div>
+      <div class="card-desc">How React.createElement produces plain JS objects. Interactive VDOM tree with before/after/diff views. Object representation of JSX.</div>
+      <div class="tags">
+        <span class="tag tag-blue">createElement</span>
+        <span class="tag tag-blue">VDOM tree</span>
+        <span class="tag tag-blue">$$typeof</span>
+      </div>
+    </a>
+    <a href="02-diffing-algorithm/index.html" class="card cat-core">
+      <div class="card-num">02</div>
+      <div class="card-title">Diffing Algorithm</div>
+      <div class="card-desc">React's O(n) heuristics: same-level diffing, element type comparison, attribute diffing. Why O(n³) naive approach is impractical.</div>
+      <div class="tags">
+        <span class="tag tag-blue">reconciliation</span>
+        <span class="tag tag-blue">O(n) heuristics</span>
+        <span class="tag tag-blue">element type</span>
+      </div>
+    </a>
+    <a href="03-keys-reconciliation/index.html" class="card cat-core">
+      <div class="card-num">03</div>
+      <div class="card-title">Keys & Reconciliation</div>
+      <div class="card-desc">Live side-by-side: index keys vs stable keys. State corruption bug demo. How React uses a Map for O(1) key lookup.</div>
+      <div class="tags">
+        <span class="tag tag-blue">keys</span>
+        <span class="tag tag-blue">state corruption</span>
+        <span class="tag tag-blue">Map lookup</span>
+      </div>
+    </a>
+    <a href="04-fiber-architecture/index.html" class="card cat-core">
+      <div class="card-num">04</div>
+      <div class="card-title">Fiber Architecture</div>
+      <div class="card-desc">Interactive fiber tree explorer. All fiber fields: child, sibling, return, stateNode, memoizedState, flags, lanes, alternate. Double buffering.</div>
+      <div class="tags">
+        <span class="tag tag-blue">fiber</span>
+        <span class="tag tag-blue">double buffering</span>
+        <span class="tag tag-blue">linked list</span>
+      </div>
+    </a>
+    <a href="05-render-commit-phases/index.html" class="card cat-core">
+      <div class="card-num">05</div>
+      <div class="card-title">Render & Commit Phases</div>
+      <div class="card-desc">Render phase (interruptible) vs Commit phase (synchronous). Live execution order log: render → useLayoutEffect → paint → useEffect.</div>
+      <div class="tags">
+        <span class="tag tag-blue">render phase</span>
+        <span class="tag tag-blue">commit phase</span>
+        <span class="tag tag-blue">interruptible</span>
+      </div>
+    </a>
+    <a href="16-work-loop/index.html" class="card cat-core">
+      <div class="card-num">16</div>
+      <div class="card-title">Work Loop: beginWork & completeWork</div>
+      <div class="card-desc">Step-by-step animated DFS traversal. beginWork top-down (reconcile), completeWork bottom-up (DOM creation, effect list). Interactive visualization.</div>
+      <div class="tags">
+        <span class="tag tag-blue">beginWork</span>
+        <span class="tag tag-blue">completeWork</span>
+        <span class="tag tag-blue">DFS traversal</span>
+      </div>
+    </a>
+  </div>
+
+  <div class="section-title">Hooks Internals</div>
+  <div class="grid">
+    <a href="06-batching/index.html" class="card cat-hooks">
+      <div class="card-num">06</div>
+      <div class="card-title">Batching (React 17 vs 18)</div>
+      <div class="card-desc">Automatic batching: React 18 batches setState in setTimeout, Promises, native handlers. flushSync opt-out. executionContext internals.</div>
+      <div class="tags">
+        <span class="tag tag-purple">batching</span>
+        <span class="tag tag-purple">flushSync</span>
+        <span class="tag tag-purple">automatic batching</span>
+      </div>
+    </a>
+    <a href="07-usestate-internals/index.html" class="card cat-hooks">
+      <div class="card-num">07</div>
+      <div class="card-title">useState Internals</div>
+      <div class="card-desc">Hook linked list visualization: 3 hooks → 3 nodes with .next pointers. mountState / updateState. Rules of Hooks explanation. Stale closure demo.</div>
+      <div class="tags">
+        <span class="tag tag-purple">hook linked list</span>
+        <span class="tag tag-purple">mountState</span>
+        <span class="tag tag-purple">stale closure</span>
+      </div>
+    </a>
+    <a href="08-useeffect-internals/index.html" class="card cat-hooks">
+      <div class="card-num">08</div>
+      <div class="card-title">useEffect Internals</div>
+      <div class="card-desc">Lifecycle timeline. Live demo with 4 effects showing exact execution order. mountEffect / updateEffect code. Dependency comparison with Object.is.</div>
+      <div class="tags">
+        <span class="tag tag-purple">passive effects</span>
+        <span class="tag tag-purple">cleanup order</span>
+        <span class="tag tag-purple">Object.is</span>
+      </div>
+    </a>
+    <a href="11-context-propagation/index.html" class="card cat-hooks">
+      <div class="card-num">11</div>
+      <div class="card-title">Context Propagation</div>
+      <div class="card-desc">How context change walks the fiber tree. Context punches through React.memo. Object.is comparison. Split context pattern for performance.</div>
+      <div class="tags">
+        <span class="tag tag-purple">context</span>
+        <span class="tag tag-purple">propagation</span>
+        <span class="tag tag-purple">readContext</span>
+      </div>
+    </a>
+    <a href="12-memo-bailout/index.html" class="card cat-hooks">
+      <div class="card-num">12</div>
+      <div class="card-title">React.memo & Bailout</div>
+      <div class="card-desc">When memo bails out vs re-renders. Object props vs primitives. useCallback for stable references. Custom compare function. updateMemoComponent code.</div>
+      <div class="tags">
+        <span class="tag tag-purple">React.memo</span>
+        <span class="tag tag-purple">shallowEqual</span>
+        <span class="tag tag-purple">bailout</span>
+      </div>
+    </a>
+  </div>
+
+  <div class="section-title">Events & Portals</div>
+  <div class="grid">
+    <a href="09-synthetic-events/index.html" class="card cat-events">
+      <div class="card-num">09</div>
+      <div class="card-title">Synthetic Events & Delegation</div>
+      <div class="card-desc">Event delegation to root container. Capture/bubble via fiber tree. React 16 (document) vs 17+ (root). Event pooling removal. Native vs React listener order.</div>
+      <div class="tags">
+        <span class="tag tag-yellow">event delegation</span>
+        <span class="tag tag-yellow">synthetic events</span>
+        <span class="tag tag-yellow">capture/bubble</span>
+      </div>
+    </a>
+    <a href="10-portals/index.html" class="card cat-events">
+      <div class="card-num">10</div>
+      <div class="card-title">Portals Internals</div>
+      <div class="card-desc">React tree vs DOM tree comparison. Events bubble through fiber tree not DOM. createPortal returns REACT_PORTAL_TYPE object. Modal and tooltip demos.</div>
+      <div class="tags">
+        <span class="tag tag-yellow">portals</span>
+        <span class="tag tag-yellow">event bubbling</span>
+        <span class="tag tag-yellow">REACT_PORTAL_TYPE</span>
+      </div>
+    </a>
+  </div>
+
+  <div class="section-title">Advanced Patterns</div>
+  <div class="grid">
+    <a href="13-error-boundaries/index.html" class="card cat-advanced">
+      <div class="card-num">13</div>
+      <div class="card-title">Error Boundaries</div>
+      <div class="card-desc">getDerivedStateFromError (render phase) vs componentDidCatch (commit phase). Two-phase mechanism. Recovery pattern with key prop. What errors are NOT caught.</div>
+      <div class="tags">
+        <span class="tag tag-green">error boundaries</span>
+        <span class="tag tag-green">getDerivedStateFromError</span>
+        <span class="tag tag-green">recovery</span>
+      </div>
+    </a>
+    <a href="14-suspense-internals/index.html" class="card cat-advanced">
+      <div class="card-num">14</div>
+      <div class="card-title">Suspense Internals</div>
+      <div class="card-desc">The "throw a Promise" protocol. React detects Promise vs Error by checking .then. Nested Suspense boundaries. useTransition + Suspense. Resource pattern.</div>
+      <div class="tags">
+        <span class="tag tag-green">suspense</span>
+        <span class="tag tag-green">throw promise</span>
+        <span class="tag tag-green">resource pattern</span>
+      </div>
+    </a>
+    <a href="18-forward-ref/index.html" class="card cat-advanced">
+      <div class="card-num">18</div>
+      <div class="card-title">forwardRef & useImperativeHandle</div>
+      <div class="card-desc">Pass ref through component. Customize ref API with useImperativeHandle (it's a useLayoutEffect internally). Callback refs vs object refs. Video player demo.</div>
+      <div class="tags">
+        <span class="tag tag-green">forwardRef</span>
+        <span class="tag tag-green">useImperativeHandle</span>
+        <span class="tag tag-green">refs</span>
+      </div>
+    </a>
+  </div>
+
+  <div class="section-title">Concurrent Mode & Scheduling</div>
+  <div class="grid">
+    <a href="15-concurrent-mode/index.html" class="card cat-concurrent">
+      <div class="card-num">15</div>
+      <div class="card-title">Concurrent Mode & Time Slicing</div>
+      <div class="card-desc">startTransition vs useDeferredValue. Priority lanes (SyncLane, TransitionLane, IdleLane). shouldYield() every 5ms. Blocking vs non-blocking filter demo with 2000 items.</div>
+      <div class="tags">
+        <span class="tag tag-red">concurrent mode</span>
+        <span class="tag tag-red">startTransition</span>
+        <span class="tag tag-red">priority lanes</span>
+        <span class="tag tag-red">time slicing</span>
+      </div>
+    </a>
+  </div>
+
+  <div class="section-title">Platform & Rendering</div>
+  <div class="grid">
+    <a href="17-hydration/index.html" class="card cat-platform">
+      <div class="card-num">17</div>
+      <div class="card-title">SSR Hydration</div>
+      <div class="card-desc">Server HTML → browser receives → JS loads → hydrateRoot walks DOM → attaches listeners. Hydration mismatches. React 18 Selective Hydration with Suspense.</div>
+      <div class="tags">
+        <span class="tag tag-orange">hydration</span>
+        <span class="tag tag-orange">SSR</span>
+        <span class="tag tag-orange">hydrateRoot</span>
+        <span class="tag tag-orange">selective hydration</span>
+      </div>
+    </a>
+    <a href="19-custom-renderer/index.html" class="card cat-platform">
+      <div class="card-num">19</div>
+      <div class="card-title">Custom Renderer & Host Config</div>
+      <div class="card-desc">react-reconciler host config API: createInstance, appendChild, commitUpdate. Live JSON tree renderer demo. How React Native, R3F, Ink work. Mutation vs persistence mode.</div>
+      <div class="tags">
+        <span class="tag tag-orange">custom renderer</span>
+        <span class="tag tag-orange">host config</span>
+        <span class="tag tag-orange">react-reconciler</span>
+        <span class="tag tag-orange">React Native</span>
+      </div>
+    </a>
+  </div>
+
+  <div class="interview-questions">
+    <h2>Top React Internals Interview Questions</h2>
+    <div class="q-grid">
+      <div class="q-item cat-core">What is the Virtual DOM and how does React's diffing algorithm achieve O(n) complexity?</div>
+      <div class="q-item cat-core">Explain React Fiber. What problem does it solve that the old stack reconciler couldn't?</div>
+      <div class="q-item cat-core">What is the difference between the render phase and commit phase? Which is interruptible?</div>
+      <div class="q-item cat-core">How does React's double buffering (current tree vs workInProgress tree) work?</div>
+      <div class="q-item cat-core">Why do keys matter in lists? What happens without them? What is the state corruption bug?</div>
+      <div class="q-item cat-core">Walk me through beginWork and completeWork. What does each do during reconciliation?</div>
+      <div class="q-item cat-hooks">How does React store hook state? What data structure is used?</div>
+      <div class="q-item cat-hooks">Why can't you call hooks inside conditionals or loops? What would break internally?</div>
+      <div class="q-item cat-hooks">What is the difference between useEffect and useLayoutEffect? When does each run?</div>
+      <div class="q-item cat-hooks">Explain React 18 automatic batching. How is it different from React 17?</div>
+      <div class="q-item cat-hooks">When does React.memo bail out? When does it fail to bail out (common mistakes)?</div>
+      <div class="q-item cat-hooks">How does Context propagation work? Why does it bypass React.memo?</div>
+      <div class="q-item cat-events">How does React's event delegation work? Where are listeners attached?</div>
+      <div class="q-item cat-events">How does event bubbling work through React portals? Why does the parent's onClick fire?</div>
+      <div class="q-item cat-events">What changed in React 17's event system vs React 16?</div>
+      <div class="q-item cat-advanced">How does Suspense work internally? What does throwing a Promise do?</div>
+      <div class="q-item cat-advanced">What's the difference between getDerivedStateFromError and componentDidCatch?</div>
+      <div class="q-item cat-advanced">What errors do Error Boundaries NOT catch? How do you handle those?</div>
+      <div class="q-item cat-concurrent">What is Concurrent Mode? How does time slicing work (shouldYield, 5ms frames)?</div>
+      <div class="q-item cat-concurrent">startTransition vs useDeferredValue — what's the difference?</div>
+      <div class="q-item cat-concurrent">Explain React's priority lane system. Name 3 different lane priorities.</div>
+      <div class="q-item cat-platform">What is SSR hydration? What is a hydration mismatch and how do you fix it?</div>
+      <div class="q-item cat-platform">How does React 18's Selective Hydration work? How does user interaction affect priority?</div>
+      <div class="q-item cat-platform">How do custom renderers work? What is the host config API? Name 3 real renderers.</div>
+    </div>
+  </div>
+</body>
+</html>

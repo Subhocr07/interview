@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>07 - useState Internals</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .hook-list { display: flex; flex-direction: column; gap: 6px; }
+    .hook-node { background: #111; border: 1px solid #333; border-radius: 8px; padding: 10px 14px; position: relative; }
+    .hook-node.active { border-color: #4f46e5; background: #1a1a2e; }
+    .hook-node h4 { font-size: 12px; color: #cba6f7; margin-bottom: 6px; }
+    .hook-fields { font-family: monospace; font-size: 11px; line-height: 1.8; }
+    .hf-key { color: #89b4fa; }
+    .hf-val { color: #a6e3a1; }
+    .hf-ptr { color: #cba6f7; }
+    .hf-queue { color: #f9e2af; }
+    .arrow-down { text-align: left; color: #444; font-size: 16px; padding: 2px 0 2px 14px; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 16px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .num { color: #fab387; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    .hl { color: #f9e2af; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .demo-comp { background: #1a1a2e; border: 1px solid #4f46e5; border-radius: 8px; padding: 14px; }
+    .demo-comp .label { font-size: 11px; color: #888; margin-bottom: 6px; }
+    .val-display { font-size: 28px; font-weight: 700; color: #89b4fa; margin: 8px 0; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-top: 8px; }
+    button:hover { background: #30363d; }
+    .update-queue { background: #111; border-radius: 6px; padding: 10px; margin-top: 10px; font-family: monospace; font-size: 12px; }
+    .update-item { padding: 3px 0; color: #f9e2af; border-bottom: 1px solid #222; }
+    .update-item:last-child { border-bottom: none; }
+    .render-badge { display: inline-block; background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); padding: 2px 8px; border-radius: 20px; font-size: 11px; }
+    .rule-box { background: #1a0d0d; border: 1px solid #5f1e1e; border-radius: 8px; padding: 12px 14px; margin-top: 10px; font-size: 13px; }
+    .rule-box .title { color: #f85149; font-weight: 700; margin-bottom: 6px; }
+    .rule-box .rule { color: #cdd6f4; margin-bottom: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef } = React;
+
+    // Simulate the useState linked list with a miniature implementation
+    function Demo() {
+      const [count, setCount] = useState(0);
+      const [name, setName] = useState('Alice');
+      const [dark, setDark] = useState(false);
+      const renderRef = useRef(0);
+      renderRef.current++;
+
+      const [pendingUpdates, setPendingUpdates] = useState([]);
+
+      function enqueueFunctional() {
+        // Shows how functional updates are queued and applied
+        setPendingUpdates(prev => [...prev, 'setCount(c => c + 1)']);
+        setCount(c => c + 1);
+        setPendingUpdates(prev => [...prev, 'setCount(c => c + 1)']);
+        setCount(c => c + 1);
+        setPendingUpdates(prev => [...prev, 'setCount(c => c + 1)']);
+        setCount(c => c + 1);
+        setTimeout(() => setPendingUpdates([]), 1500);
+      }
+
+      function enqueueStale() {
+        // Demonstrates stale closure issue
+        const captured = count; // closure captures current value
+        setPendingUpdates(prev => [...prev, `setCount(${captured} + 1) — stale closure!`]);
+        setTimeout(() => {
+          setCount(captured + 1); // BUG: uses stale captured value
+          setTimeout(() => {
+            setPendingUpdates([]);
+          }, 1500);
+        }, 500);
+      }
+
+      return (
+        <div>
+          <div className="demo-comp" style={{ marginBottom: 20 }}>
+            <div className="label">Component renders: <span className="render-badge">{renderRef.current}</span></div>
+            <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ color: '#888', fontSize: 12 }}>Hook 1: count</div>
+                <div className="val-display">{count}</div>
+                <button onClick={() => setCount(c => c + 1)}>+1 (functional)</button>
+                <button onClick={() => setCount(count + 1)}>+1 (direct)</button>
+                <button onClick={() => setCount(0)}>Reset</button>
+              </div>
+              <div>
+                <div style={{ color: '#888', fontSize: 12 }}>Hook 2: name</div>
+                <div className="val-display" style={{ fontSize: 18 }}>{name}</div>
+                <button onClick={() => setName(n => n + '!')}>Append !</button>
+                <button onClick={() => setName('Alice')}>Reset</button>
+              </div>
+              <div>
+                <div style={{ color: '#888', fontSize: 12 }}>Hook 3: dark</div>
+                <div className="val-display" style={{ fontSize: 18 }}>{dark ? '🌙' : '☀️'}</div>
+                <button onClick={() => setDark(d => !d)}>Toggle</button>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 16 }}>
+            <div>
+              <button onClick={enqueueFunctional}>Batch 3 functional updates (correct)</button>
+              <button onClick={enqueueStale} style={{ marginLeft: 8 }}>Stale closure demo (BUG)</button>
+              {pendingUpdates.length > 0 && (
+                <div className="update-queue">
+                  <div style={{ color: '#888', fontSize: 11, marginBottom: 4 }}>Update Queue for count hook:</div>
+                  {pendingUpdates.map((u, i) => <div key={i} className="update-item">{i + 1}. {u}</div>)}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>07 — useState Internals</h1>
+          <p className="desc">
+            useState is not magic — it's a linked list of "hook objects" stored on the fiber node.
+            React tracks the current hook by its position (call order), which is why hooks cannot be called conditionally.
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>The Hook Linked List (memoizedState on fiber)</h2>
+              <div className="hook-list">
+                <div className="hook-node active">
+                  <h4>Hook #0 — useState(0) ← count</h4>
+                  <div className="hook-fields">
+                    <div><span className="hf-key">memoizedState:</span> <span className="hf-val">0</span> <span className="cm">(current value)</span></div>
+                    <div><span className="hf-key">baseState:</span> <span className="hf-val">0</span> <span className="cm">(used by concurrent mode)</span></div>
+                    <div><span className="hf-key">queue:</span> <span className="hf-queue">UpdateQueue {'{'} pending: null {'}'}</span></div>
+                    <div><span className="hf-key">dispatch:</span> <span className="hf-val">setState function</span></div>
+                    <div><span className="hf-key">next:</span> <span className="hf-ptr">→ Hook #1</span></div>
+                  </div>
+                </div>
+                <div className="arrow-down">↓</div>
+                <div className="hook-node">
+                  <h4>Hook #1 — useState('Alice') ← name</h4>
+                  <div className="hook-fields">
+                    <div><span className="hf-key">memoizedState:</span> <span className="hf-val">'Alice'</span></div>
+                    <div><span className="hf-key">queue:</span> <span className="hf-queue">UpdateQueue {'{'} pending: null {'}'}</span></div>
+                    <div><span className="hf-key">dispatch:</span> <span className="hf-val">setState function</span></div>
+                    <div><span className="hf-key">next:</span> <span className="hf-ptr">→ Hook #2</span></div>
+                  </div>
+                </div>
+                <div className="arrow-down">↓</div>
+                <div className="hook-node">
+                  <h4>Hook #2 — useState(false) ← dark</h4>
+                  <div className="hook-fields">
+                    <div><span className="hf-key">memoizedState:</span> <span className="hf-val">false</span></div>
+                    <div><span className="hf-key">queue:</span> <span className="hf-queue">UpdateQueue {'{'} pending: null {'}'}</span></div>
+                    <div><span className="hf-key">dispatch:</span> <span className="hf-val">setState function</span></div>
+                    <div><span className="hf-key">next:</span> <span className="hf-val" style={{ color: '#666' }}>null (end of list)</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rule-box">
+                <div className="title">⚠ Rules of Hooks — WHY they exist</div>
+                <div className="rule">1. Never call hooks inside if/else/loops</div>
+                <div className="rule">2. Never call hooks in regular functions</div>
+                <div style={{ fontSize: 12, color: '#888', marginTop: 6 }}>
+                  React identifies hooks by their position in the list (index 0, 1, 2...).
+                  If you call a hook conditionally, on re-render the positions shift → React reads the wrong value from the wrong hook node.
+                </div>
+              </div>
+
+              <Demo />
+            </div>
+
+            <div className="panel">
+              <h2>Simplified useState Implementation</h2>
+              <div className="code">
+                <div className="cm">// Dispatcher — switches between mount and update</div>
+                <div><span className="kw">let</span> workInProgressHook = null;</div>
+                <div><span className="kw">let</span> currentHook = null;</div>
+                <br/>
+                <div className="cm">// On MOUNT: creates a new hook node</div>
+                <div><span className="kw">function</span> <span className="fn-name">mountState</span>(initialState) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> hook = {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;memoizedState: <span className="kw">typeof</span> initialState === <span className="str">'function'</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;? initialState() <span className="cm">// lazy initialization</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: initialState,</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;queue: {'{'} pending: null, dispatch: null {'}'},</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;next: null, <span className="cm">// linked list pointer</span></div>
+                <div>&nbsp;&nbsp;{'}'};</div>
+                <div>&nbsp;&nbsp;<span className="cm">// Append to linked list</span></div>
+                <div>&nbsp;&nbsp;<span className="kw">if</span> (workInProgressHook === null) fiber.memoizedState = hook;</div>
+                <div>&nbsp;&nbsp;<span className="kw">else</span> workInProgressHook.next = hook;</div>
+                <div>&nbsp;&nbsp;workInProgressHook = hook;</div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> dispatch = enqueueUpdate.bind(null, fiber, hook.queue);</div>
+                <div>&nbsp;&nbsp;hook.queue.dispatch = dispatch;</div>
+                <div>&nbsp;&nbsp;<span className="kw">return</span> [hook.memoizedState, dispatch];</div>
+                <div>{'}'}</div>
+                <br/>
+                <div className="cm">// On UPDATE: reads from existing hook node</div>
+                <div><span className="kw">function</span> <span className="fn-name">updateState</span>() {'{'}</div>
+                <div>&nbsp;&nbsp;currentHook = currentHook.next; <span className="cm">// advance pointer!</span></div>
+                <div>&nbsp;&nbsp;<span className="cm">// Process pending update queue</span></div>
+                <div>&nbsp;&nbsp;<span className="kw">let</span> newState = currentHook.memoizedState;</div>
+                <div>&nbsp;&nbsp;<span className="kw">let</span> update = currentHook.queue.pending;</div>
+                <div>&nbsp;&nbsp;<span className="kw">while</span> (update) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;newState = <span className="kw">typeof</span> update.action === <span className="str">'function'</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;? update.action(newState) <span className="cm">// functional update</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: update.action; <span className="cm">// direct value</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;update = update.next;</div>
+                <div>&nbsp;&nbsp;{'}'}</div>
+                <div>&nbsp;&nbsp;currentHook.memoizedState = newState;</div>
+                <div>&nbsp;&nbsp;<span className="kw">return</span> [newState, currentHook.queue.dispatch];</div>
+                <div>{'}'}</div>
+              </div>
+
+              <div className="explain">
+                <strong>Functional updates vs direct value:</strong><br/><br/>
+                <code>setState(42)</code> — action is the value itself. Stored in the update queue as-is.<br/><br/>
+                <code>setState(n =&gt; n + 1)</code> — action is a function. React calls it with the latest state when processing the queue.
+                This is crucial for <span className="hl">batched updates</span> — each functional update sees the result of the previous one:<br/>
+                <div style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 8, background: '#0d1117', padding: 8, borderRadius: 6 }}>
+                  setCount(c =&gt; c + 1); // queue: [c=&gt;c+1]<br/>
+                  setCount(c =&gt; c + 1); // queue: [c=&gt;c+1, c=&gt;c+1]<br/>
+                  setCount(c =&gt; c + 1); // queue: [c=&gt;c+1, c=&gt;c+1, c=&gt;c+1]<br/>
+                  <span style={{ color: '#3fb950' }}>// Result: 0→1→2→3 ✓</span>
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  vs
+                </div>
+                <div style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 8, background: '#0d1117', padding: 8, borderRadius: 6 }}>
+                  setCount(count + 1); // count is 0, queues: 1<br/>
+                  setCount(count + 1); // count still 0! queues: 1<br/>
+                  setCount(count + 1); // count still 0! queues: 1<br/>
+                  <span style={{ color: '#f85149' }}>// Result: 0→1 (not 3!) ✗ stale closure bug</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>01 - Virtual DOM</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 14px; }
+    .tree { font-family: monospace; font-size: 13px; line-height: 1.8; }
+    .node { display: flex; flex-direction: column; }
+    .node-line { display: flex; align-items: flex-start; gap: 6px; }
+    .indent { display: flex; }
+    .branch { color: #444; }
+    .tag { color: #89b4fa; }
+    .attr { color: #cba6f7; }
+    .val { color: #a6e3a1; }
+    .text { color: #f9e2af; }
+    .changed { background: rgba(239,68,68,0.15); border-left: 3px solid #ef4444; padding-left: 6px; border-radius: 2px; }
+    .added { background: rgba(16,185,129,0.15); border-left: 3px solid #10b981; padding-left: 6px; border-radius: 2px; }
+    .same { opacity: 0.5; }
+    .json-view { background: #111; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; overflow: auto; max-height: 320px; }
+    .jk { color: #89b4fa; }
+    .jv-str { color: #a6e3a1; }
+    .jv-num { color: #fab387; }
+    .jv-bool { color: #cba6f7; }
+    .jv-null { color: #6c7086; }
+    button { padding: 8px 16px; background: #4f46e5; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; margin-right: 8px; margin-bottom: 8px; }
+    button:hover { background: #4338ca; }
+    .dom-inspector { font-family: monospace; font-size: 12px; line-height: 1.7; }
+    .dom-el { color: #89b4fa; }
+    .dom-attr { color: #cba6f7; }
+    .dom-val { color: #a6e3a1; }
+    .dom-text { color: #f9e2af; }
+    .diff-legend { display: flex; gap: 16px; margin-bottom: 14px; font-size: 12px; }
+    .leg { display: flex; align-items: center; gap: 6px; }
+    .leg-dot { width: 10px; height: 10px; border-radius: 2px; }
+    .leg-changed { background: #ef4444; }
+    .leg-added { background: #10b981; }
+    .leg-same { background: #444; }
+    .concept { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    .concept strong { color: #89b4fa; }
+    .highlight { color: #f9e2af; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Mini VDOM node representation
+    function vnode(type, props, ...children) {
+      return { type, props: props || {}, children: children.flat() };
+    }
+
+    const BEFORE = vnode('div', { className: 'card', id: 'card-1' },
+      vnode('h2', { style: 'color:blue' }, 'Hello World'),
+      vnode('p', { className: 'text' }, 'Count: 0'),
+      vnode('button', { onClick: 'handleClick', disabled: false }, 'Click me'),
+    );
+
+    const AFTER = vnode('div', { className: 'card active', id: 'card-1' },
+      vnode('h2', { style: 'color:red' }, 'Hello React'),
+      vnode('p', { className: 'text' }, 'Count: 1'),
+      vnode('button', { onClick: 'handleClick', disabled: false }, 'Click me'),
+      vnode('span', { className: 'badge' }, 'NEW'),
+    );
+
+    function diffNodes(before, after) {
+      if (!before) return 'added';
+      if (!after) return 'removed';
+      if (before.type !== after.type) return 'changed';
+      const propsChanged = JSON.stringify(before.props) !== JSON.stringify(after.props) ||
+        JSON.stringify(before.children) !== JSON.stringify(after.children);
+      return propsChanged ? 'changed' : 'same';
+    }
+
+    function JsonLine({ k, v, indent = 0 }) {
+      const pad = '  '.repeat(indent);
+      function renderValue(val) {
+        if (val === null) return <span className="jv-null">null</span>;
+        if (typeof val === 'string') return <span className="jv-str">"{val}"</span>;
+        if (typeof val === 'number') return <span className="jv-num">{val}</span>;
+        if (typeof val === 'boolean') return <span className="jv-bool">{String(val)}</span>;
+        if (typeof val === 'object') return <span style={{ color: '#888' }}>{'{'} ... {'}'}</span>;
+        return <span>{String(val)}</span>;
+      }
+      return (
+        <div>
+          {pad}<span className="jk">"{k}"</span>: {renderValue(v)}
+        </div>
+      );
+    }
+
+    function VnodeView({ node, depth = 0, diff = 'same' }) {
+      if (typeof node === 'string') {
+        return <div style={{ paddingLeft: depth * 20, opacity: 0.7 }} className="text">{'"'}{node}{'"'}</div>;
+      }
+      const pad = depth * 20;
+      return (
+        <div style={{ paddingLeft: pad }}>
+          <div className={diff === 'changed' ? 'changed' : diff === 'added' ? 'added' : 'same'} style={{ borderRadius: 4, marginBottom: 2 }}>
+            <span className="tag">&lt;{node.type}</span>
+            {Object.entries(node.props).map(([k, v]) => (
+              <span key={k}> <span className="attr">{k}</span>=<span className="val">"{String(v)}"</span></span>
+            ))}
+            <span className="tag">&gt;</span>
+          </div>
+          {node.children.map((child, i) => (
+            <VnodeView key={i} node={child} depth={depth + 1} diff="same" />
+          ))}
+          <div className={`${diff === 'same' ? 'same' : ''}`}>
+            <span className="tag">&lt;/{node.type}&gt;</span>
+          </div>
+        </div>
+      );
+    }
+
+    function DiffView({ before, after, depth = 0 }) {
+      if (!before && !after) return null;
+      if (typeof after === 'string' || typeof before === 'string') {
+        const changed = before !== after;
+        return (
+          <div style={{ paddingLeft: depth * 20 }} className={changed ? 'changed' : 'same'}>
+            <span className="text">{typeof after === 'string' ? `"${after}"` : '""'}</span>
+            {changed && <span style={{ color: '#ef4444', marginLeft: 8, fontSize: 11 }}>← was "{before}"</span>}
+          </div>
+        );
+      }
+      if (!before) {
+        return <div style={{ paddingLeft: depth * 20 }} className="added"><span className="tag">&lt;{after.type}&gt;</span> <span style={{ color: '#10b981', fontSize: 11 }}>NEW NODE</span></div>;
+      }
+      const diff = diffNodes(before, after);
+      return (
+        <div style={{ paddingLeft: depth * 20 }}>
+          <div className={diff === 'changed' ? 'changed' : diff === 'added' ? 'added' : 'same'} style={{ borderRadius: 4, marginBottom: 2, padding: '1px 4px' }}>
+            <span className="tag">&lt;{after.type}</span>
+            {Object.entries(after.props).map(([k, v]) => {
+              const old = before.props[k];
+              const propChanged = old !== v;
+              return (
+                <span key={k}>
+                  {' '}<span className="attr">{k}</span>=
+                  <span className={propChanged ? '' : 'val'} style={propChanged ? { color: '#f38ba8' } : {}}>"{String(v)}"</span>
+                  {propChanged && <span style={{ color: '#888', fontSize: 11 }}>(was "{String(old)}")</span>}
+                </span>
+              );
+            })}
+            <span className="tag">&gt;</span>
+            {diff !== 'same' && <span style={{ fontSize: 11, color: '#f38ba8', marginLeft: 8 }}>← {diff}</span>}
+          </div>
+          {after.children.map((child, i) => (
+            <DiffView key={i} before={before.children[i]} after={child} depth={depth + 1} />
+          ))}
+          <div><span className="tag">&lt;/{after.type}&gt;</span></div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [view, setView] = useState('before');
+      const node = view === 'before' ? BEFORE : AFTER;
+
+      return (
+        <div>
+          <h1>01 — Virtual DOM Internals</h1>
+          <p className="desc">
+            React maintains a <strong className="highlight">Virtual DOM</strong> — a lightweight JavaScript object tree mirroring the real DOM.
+            On every render, React compares the new VDOM tree against the previous one (diffing) and applies only the minimal changes to the real DOM.
+            This is called <strong className="highlight">reconciliation</strong>.
+          </p>
+
+          <div style={{ marginBottom: 20 }}>
+            <button onClick={() => setView('before')}>Before (state=0)</button>
+            <button onClick={() => setView('after')}>After (state=1)</button>
+            <button onClick={() => setView('diff')}>Diff View</button>
+          </div>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>{view === 'diff' ? 'Diff: Before → After' : `VDOM Tree (${view})`}</h2>
+              <div className="diff-legend">
+                <div className="leg"><div className="leg-dot leg-changed"/><span>Changed</span></div>
+                <div className="leg"><div className="leg-dot leg-added"/><span>Added</span></div>
+                <div className="leg"><div className="leg-dot leg-same"/><span>Same (no DOM update)</span></div>
+              </div>
+              <div className="tree">
+                {view === 'diff'
+                  ? <DiffView before={BEFORE} after={AFTER} />
+                  : <VnodeView node={node} />}
+              </div>
+            </div>
+
+            <div className="panel">
+              <h2>JS Object Representation</h2>
+              <div className="json-view">
+                <pre style={{ color: '#cdd6f4', fontSize: 12 }}>{JSON.stringify(node, null, 2)
+                  .replace(/"(\w+)":/g, (_, k) => `\x1b[34m"${k}"\x1b[0m:`)}</pre>
+                <div style={{ marginTop: 12, fontSize: 11, color: '#888' }}>
+                  A React element is just a plain JS object with: type, props, children.
+                  React.createElement() and JSX both produce this structure.
+                </div>
+              </div>
+
+              <div className="concept">
+                <strong>How it works:</strong><br/>
+                1. JSX → <span className="highlight">React.createElement()</span> → plain JS objects (VDOM nodes)<br/>
+                2. React keeps the <span className="highlight">previous VDOM tree</span> in memory<br/>
+                3. On re-render: <span className="highlight">new tree is diffed</span> against old tree<br/>
+                4. Only real DOM mutations are applied for what actually changed<br/>
+                5. This batches and minimizes expensive DOM operations<br/><br/>
+                <strong>Why not just update the DOM directly?</strong><br/>
+                DOM reads/writes are expensive. Updating JS objects (VDOM) is ~10x cheaper.
+                React uses the VDOM as a staging area for calculating the minimum set of changes.
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

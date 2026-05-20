@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>08 - useEffect Internals</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .timeline { display: flex; flex-direction: column; gap: 0; }
+    .tl-item { display: flex; gap: 14px; }
+    .tl-left { display: flex; flex-direction: column; align-items: center; width: 20px; flex-shrink: 0; }
+    .tl-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+    .tl-line { width: 2px; background: #333; flex: 1; margin: 2px 0; }
+    .tl-content { padding: 0 0 14px; flex: 1; }
+    .tl-content .title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+    .tl-content .sub { font-size: 11px; color: #888; line-height: 1.5; }
+    .dot-render { background: #79c0ff; }
+    .dot-commit { background: #3fb950; }
+    .dot-paint { background: #e3b341; }
+    .dot-effect { background: #a855f7; }
+    .dot-cleanup { background: #f85149; }
+    .title-render { color: #79c0ff; }
+    .title-commit { color: #3fb950; }
+    .title-paint { color: #e3b341; }
+    .title-effect { color: #a855f7; }
+    .title-cleanup { color: #f85149; }
+    .demo-log { background: #0d1117; border-radius: 8px; padding: 14px; max-height: 300px; overflow-y: auto; font-size: 12px; font-family: monospace; }
+    .log-render { color: #79c0ff; }
+    .log-layout { color: #e3b341; }
+    .log-effect { color: #a855f7; }
+    .log-cleanup { color: #f85149; }
+    .log-mount { color: #3fb950; }
+    .log-info { color: #666; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .num { color: #fab387; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .dep-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+    .dep-table th { background: #1a1a1a; padding: 6px 10px; text-align: left; color: #888; }
+    .dep-table td { padding: 6px 10px; border-bottom: 1px solid #222; font-family: monospace; }
+    .dep-table tr:last-child td { border-bottom: none; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 700; }
+    .badge-every { background: rgba(248,81,73,0.15); color: #f85149; }
+    .badge-once { background: rgba(63,185,80,0.15); color: #3fb950; }
+    .badge-dep { background: rgba(168,85,247,0.15); color: #a855f7; }
+    .highlight-box { background: #1a1a2e; border: 1px solid #4f46e5; border-radius: 8px; padding: 12px; margin-top: 10px; font-size: 12px; }
+    .highlight-box .label { color: #89b4fa; font-weight: 700; margin-bottom: 6px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useLayoutEffect, useRef } = React;
+
+    const globalLog = [];
+    function log(msg, type) {
+      globalLog.unshift({ msg, type, t: performance.now().toFixed(1) });
+    }
+
+    function TrackedApp() {
+      const [count, setCount] = useState(0);
+      const [name, setName] = useState('Alice');
+      const [, forceUpdate] = useState(0);
+      const renderRef = useRef(0);
+      renderRef.current++;
+
+      log(`render(count=${count}, name="${name}")`, 'render');
+
+      // Effect with no deps — runs after EVERY render
+      useEffect(() => {
+        log(`useEffect [] — mounted`, 'effect');
+        return () => log(`useEffect [] — cleanup (unmount)`, 'cleanup');
+      }, []);
+
+      // Effect with [] — runs only on mount
+      useEffect(() => {
+        log(`useEffect [count] — count changed to ${count}`, 'effect');
+        return () => log(`useEffect [count] — cleanup (count was ${count})`, 'cleanup');
+      }, [count]);
+
+      // Effect that depends on name
+      useEffect(() => {
+        log(`useEffect [name] — name changed to "${name}"`, 'effect');
+        return () => log(`useEffect [name] — cleanup (name was "${name}")`, 'cleanup');
+      }, [name]);
+
+      // No dep array — runs after every render
+      useEffect(() => {
+        log(`useEffect (no deps) — runs after every render #${renderRef.current}`, 'effect');
+        return () => log(`useEffect (no deps) — cleanup`, 'cleanup');
+      });
+
+      useLayoutEffect(() => {
+        log(`useLayoutEffect — DOM updated, before paint, render #${renderRef.current}`, 'layout');
+        return () => log(`useLayoutEffect — cleanup`, 'cleanup');
+      }, [count]);
+
+      const entries = [...globalLog];
+
+      return (
+        <div>
+          <div style={{ marginBottom: 12 }}>
+            <span style={{ color: '#888', fontSize: 12 }}>render #{renderRef.current} | count={count} | name="{name}"</span>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+            <button onClick={() => setCount(c => c + 1)}>+count</button>
+            <button onClick={() => setName(n => n + '!')}>+name</button>
+            <button onClick={() => forceUpdate(x => x + 1)}>Force Re-render (no state change)</button>
+            <button onClick={() => { globalLog.length = 0; forceUpdate(x => x + 1); }}>Clear Log</button>
+          </div>
+          <div className="demo-log">
+            {entries.length === 0 && <div className="log-info">Click a button to see effect execution order</div>}
+            {entries.slice(0, 25).map((e, i) => (
+              <div key={i} className={`log-${e.type}`}>[{e.t}ms] {e.msg}</div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>08 — useEffect Internals</h1>
+          <p className="desc">
+            useEffect is scheduled as a "passive effect" — it runs asynchronously after the browser has painted.
+            React stores effects as a linked list on the fiber, processes cleanup before re-running effects.
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>Lifecycle Timeline (function component)</h2>
+              <div className="timeline">
+                {[
+                  { dot: 'dot-render', title: 'title-render', label: '1. render()', sub: 'Component function called. Pure. No side effects. May be called multiple times (Concurrent Mode). Effects NOT run yet.' },
+                  { dot: 'dot-commit', title: 'title-commit', label: '2. DOM committed', sub: 'Fiber flags processed: insertions, updates, deletions applied to real DOM. Refs attached.' },
+                  { dot: 'dot-paint', title: 'title-paint', label: '3. useLayoutEffect', sub: 'Runs synchronously after DOM mutations, before browser paint. Previous cleanup runs first. Use for DOM measurements.' },
+                  { dot: 'dot-paint', title: 'title-paint', label: '4. Browser paints', sub: 'Browser renders pixels to screen. User sees the update.' },
+                  { dot: 'dot-effect', title: 'title-effect', label: '5. useEffect', sub: 'Runs asynchronously after paint. Previous cleanup runs first. Safe for subscriptions, fetches, timers.' },
+                ].map((item, i) => (
+                  <div className="tl-item" key={i}>
+                    <div className="tl-left">
+                      <div className={`tl-dot ${item.dot}`} />
+                      {i < 4 && <div className="tl-line" />}
+                    </div>
+                    <div className="tl-content">
+                      <div className={`title ${item.title}`}>{item.label}</div>
+                      <div className="sub">{item.sub}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <table className="dep-table">
+                <thead>
+                  <tr><th>Dependency Array</th><th>When it runs</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>useEffect(fn)</code></td>
+                    <td><span className="badge badge-every">EVERY render</span> (no array = always)</td>
+                  </tr>
+                  <tr>
+                    <td><code>useEffect(fn, [])</code></td>
+                    <td><span className="badge badge-once">ONCE</span> after mount only</td>
+                  </tr>
+                  <tr>
+                    <td><code>useEffect(fn, [a, b])</code></td>
+                    <td><span className="badge badge-dep">WHEN a or b changes</span> (Object.is comparison)</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="panel">
+              <h2>Live Demo — Observe Effect Order</h2>
+              <TrackedApp />
+
+              <div className="code" style={{ marginTop: 14 }}>
+                <div className="cm">// Simplified useEffect internal implementation</div>
+                <div><span className="kw">function</span> <span className="fn-name">mountEffect</span>(create, deps) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> hook = mountWorkInProgressHook();</div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> nextDeps = deps === undefined ? null : deps;</div>
+                <div>&nbsp;&nbsp;hook.memoizedState = {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;tag: HookPassive, <span className="cm">// vs HookLayout for useLayoutEffect</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;create, <span className="cm">// your effect function</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;destroy: undefined, <span className="cm">// cleanup (return value)</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;deps: nextDeps,</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;next: null,</div>
+                <div>&nbsp;&nbsp;{'}'};</div>
+                <div>&nbsp;&nbsp;fiber.flags |= PassiveEffect; <span className="cm">// mark for later</span></div>
+                <div>{'}'}</div>
+                <br/>
+                <div><span className="kw">function</span> <span className="fn-name">updateEffect</span>(create, deps) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> hook = updateWorkInProgressHook();</div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> prevDeps = hook.memoizedState.deps;</div>
+                <div>&nbsp;&nbsp;<span className="cm">// areHookInputsEqual uses Object.is for each dep</span></div>
+                <div>&nbsp;&nbsp;<span className="kw">if</span> (<span className="fn-name">areHookInputsEqual</span>(deps, prevDeps)) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;hook.memoizedState = {'{'} ..., tag: NoFlags {'}'};</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span>; <span className="cm">// skip — deps unchanged</span></div>
+                <div>&nbsp;&nbsp;{'}'}</div>
+                <div>&nbsp;&nbsp;hook.memoizedState = {'{'} ..., create, deps {'}'};</div>
+                <div>&nbsp;&nbsp;fiber.flags |= PassiveEffect; <span className="cm">// schedule re-run</span></div>
+                <div>{'}'}</div>
+              </div>
+            </div>
+
+            <div className="explain" style={{ flex: '1 1 100%' }}>
+              <strong style={{ color: '#89b4fa' }}>Cleanup execution order</strong><br/><br/>
+              When an effect re-runs (deps changed), React runs the <span style={{ color: '#f85149' }}>cleanup of the PREVIOUS effect</span> first, then the new effect.
+              This prevents stale subscriptions, memory leaks, and race conditions.<br/><br/>
+              <strong>Example — WebSocket subscription:</strong>
+              <div style={{ fontFamily: 'monospace', fontSize: 12, marginTop: 8, background: '#0d1117', padding: 10, borderRadius: 6, lineHeight: 1.8 }}>
+                <span style={{ color: '#cba6f7' }}>useEffect</span>(() =&gt; {'{'}<br/>
+                &nbsp;&nbsp;<span style={{ color: '#6c7086' }}>// 1. runs after render (roomId=1)</span><br/>
+                &nbsp;&nbsp;<span style={{ color: '#6c7086' }}>// connects to room 1</span><br/>
+                &nbsp;&nbsp;<span style={{ color: '#89b4fa' }}>const</span> ws = <span style={{ color: '#89b4fa' }}>new</span> WebSocket(`/room/${'{'}roomId{'}'}`)<br/>
+                &nbsp;&nbsp;<span style={{ color: '#cba6f7' }}>return</span> () =&gt; ws.close(); <span style={{ color: '#6c7086' }}>// cleanup</span><br/>
+                {'}'}, [roomId]); <span style={{ color: '#6c7086' }}>// deps: roomId</span><br/><br/>
+                <span style={{ color: '#6c7086' }}>// When roomId changes to 2:</span><br/>
+                <span style={{ color: '#f85149' }}>// 1. cleanup runs → ws.close() [room 1 disconnected]</span><br/>
+                <span style={{ color: '#a855f7' }}>// 2. effect runs → new WebSocket('/room/2')</span>
+              </div>
+              <br/>
+              <strong>Common mistakes:</strong><br/>
+              ❌ Missing deps → stale closure bug (effect uses old values)<br/>
+              ❌ Object/array in deps → new reference every render = infinite loop<br/>
+              ❌ Async function directly → <code>useEffect(async () =&gt; ...)</code> returns a Promise, not a cleanup function<br/>
+              ✅ Correct async: <code>useEffect(() =&gt; {'{'} const fetch = async () =&gt; {...}; fetch(); {'}'}, [])</code>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
