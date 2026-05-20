@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>16 - Work Loop & beginWork/completeWork</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .num { color: #fab387; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .tree-viz { position: relative; }
+    .fiber-node { border: 1px solid #333; border-radius: 6px; padding: 8px 12px; font-family: monospace; font-size: 11px; cursor: pointer; transition: all 0.2s; user-select: none; margin: 4px 0; }
+    .fiber-node:hover { border-color: #89b4fa; }
+    .fiber-node.begin { border-color: #89b4fa; background: #0d1a2a; animation: beginPulse 0.3s; }
+    .fiber-node.complete { border-color: #3fb950; background: #0d1a0d; animation: completePulse 0.3s; }
+    .fiber-node.commit { border-color: #a855f7; background: #1a0a2a; }
+    @keyframes beginPulse { 0% { background: #1a3a5a; } 100% { background: #0d1a2a; } }
+    @keyframes completePulse { 0% { background: #1a3a1a; } 100% { background: #0d1a0d; } }
+    .fiber-phase { font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 6px; }
+    .phase-begin { background: rgba(137,180,250,0.2); color: #89b4fa; }
+    .phase-complete { background: rgba(63,185,80,0.2); color: #3fb950; }
+    .phase-commit { background: rgba(168,85,247,0.2); color: #a855f7; }
+    .indent { padding-left: 20px; border-left: 1px dashed #2a2a2a; margin-left: 10px; }
+    .traversal-log { background: #0d1117; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 11px; max-height: 200px; overflow-y: auto; margin-top: 10px; }
+    .log-begin { color: #89b4fa; }
+    .log-complete { color: #3fb950; }
+    .log-commit { color: #a855f7; }
+    .log-yield { color: #e3b341; }
+    .algo-step { display: flex; gap: 10px; margin-bottom: 10px; }
+    .step-badge { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 700; flex-shrink: 0; font-family: monospace; }
+    .step-content { font-size: 12px; color: #cdd6f4; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    // ─── Fiber tree simulation ────────────────────────────────────────
+    const FIBER_TREE = {
+      id: 'App', type: 'function',
+      children: [
+        {
+          id: 'Header', type: 'function',
+          children: [
+            { id: 'h1', type: 'host', children: [] },
+            { id: 'nav', type: 'host', children: [
+              { id: 'a#home', type: 'host', children: [] },
+              { id: 'a#about', type: 'host', children: [] },
+            ]},
+          ]
+        },
+        {
+          id: 'Main', type: 'function',
+          children: [
+            { id: 'Article', type: 'function', children: [
+              { id: 'p', type: 'host', children: [] },
+              { id: 'img', type: 'host', children: [] },
+            ]},
+            { id: 'Sidebar', type: 'function', children: [
+              { id: 'ul', type: 'host', children: [
+                { id: 'li#1', type: 'host', children: [] },
+                { id: 'li#2', type: 'host', children: [] },
+              ]},
+            ]},
+          ]
+        },
+        {
+          id: 'Footer', type: 'function',
+          children: [
+            { id: 'div.footer', type: 'host', children: [] },
+          ]
+        }
+      ]
+    };
+
+    // DFS traversal order: begin top-down, complete bottom-up
+    function buildTraversal(node, result = []) {
+      result.push({ id: node.id, phase: 'begin', type: node.type });
+      for (const child of node.children) {
+        buildTraversal(child, result);
+      }
+      result.push({ id: node.id, phase: 'complete', type: node.type });
+      return result;
+    }
+
+    const TRAVERSAL = buildTraversal(FIBER_TREE);
+
+    function FiberTree({ nodeStates }) {
+      function renderNode(node, depth = 0) {
+        const state = nodeStates[node.id] || 'idle';
+        return (
+          <div key={node.id}>
+            <div className={`fiber-node ${state}`}>
+              <span style={{ color: node.type === 'function' ? '#a855f7' : '#89b4fa' }}>
+                {node.type === 'function' ? `<${node.id}>` : `<${node.id}>`}
+              </span>
+              {state === 'begin' && <span className="fiber-phase phase-begin">beginWork ↓</span>}
+              {state === 'complete' && <span className="fiber-phase phase-complete">completeWork ↑</span>}
+              {state === 'commit' && <span className="fiber-phase phase-commit">committed</span>}
+            </div>
+            {node.children.length > 0 && (
+              <div className="indent">
+                {node.children.map(child => renderNode(child, depth + 1))}
+              </div>
+            )}
+          </div>
+        );
+      }
+      return <div className="tree-viz">{renderNode(FIBER_TREE)}</div>;
+    }
+
+    function WorkLoopViz() {
+      const [nodeStates, setNodeStates] = useState({});
+      const [log, setLog] = useState([]);
+      const [step, setStep] = useState(0);
+      const [running, setRunning] = useState(false);
+      const timerRef = useRef(null);
+
+      function reset() {
+        clearInterval(timerRef.current);
+        setNodeStates({});
+        setLog([]);
+        setStep(0);
+        setRunning(false);
+      }
+
+      function runStep(currentStep) {
+        if (currentStep >= TRAVERSAL.length) {
+          // After all complete, mark all as commit
+          setNodeStates(prev => {
+            const next = {};
+            for (const k of Object.keys(prev)) next[k] = 'commit';
+            return next;
+          });
+          setLog(prev => [{ phase: 'commit', id: 'All', msg: 'Commit phase: DOM mutations applied' }, ...prev]);
+          setRunning(false);
+          return;
+        }
+        const item = TRAVERSAL[currentStep];
+        setNodeStates(prev => ({ ...prev, [item.id]: item.phase }));
+        setLog(prev => [{
+          phase: item.phase,
+          id: item.id,
+          msg: item.phase === 'begin'
+            ? `beginWork(${item.id}) — reconcile children, diff props`
+            : `completeWork(${item.id}) — create/update DOM node, build effect list`
+        }, ...prev].slice(0, 30));
+        setStep(currentStep + 1);
+      }
+
+      function startAuto() {
+        setRunning(true);
+        let s = step;
+        timerRef.current = setInterval(() => {
+          if (s >= TRAVERSAL.length) {
+            runStep(s);
+            clearInterval(timerRef.current);
+            setRunning(false);
+            return;
+          }
+          runStep(s);
+          s++;
+        }, 300);
+      }
+
+      return (
+        <div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            <button onClick={() => runStep(step)} disabled={running || step > TRAVERSAL.length}>
+              Step → ({step}/{TRAVERSAL.length})
+            </button>
+            <button onClick={startAuto} disabled={running}>Auto Play</button>
+            <button onClick={reset}>Reset</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <FiberTree nodeStates={nodeStates} />
+            <div className="traversal-log">
+              {log.length === 0 && <div style={{ color: '#555' }}>Click Step or Auto Play to visualize the work loop</div>}
+              {log.map((e, i) => (
+                <div key={i} className={`log-${e.phase}`}>[{e.phase}] {e.id}: {e.msg.slice(0, 60)}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>16 — Work Loop: beginWork & completeWork</h1>
+          <p className="desc">
+            React's work loop performs a depth-first traversal of the fiber tree.
+            <code>beginWork</code> processes each fiber top-down (reconciliation),
+            and <code>completeWork</code> processes each fiber bottom-up (effect list construction, DOM node creation).
+          </p>
+
+          <div className="layout">
+            <div className="panel" style={{ flex: 2 }}>
+              <h2>Interactive Work Loop Visualization</h2>
+              <WorkLoopViz />
+            </div>
+
+            <div className="panel" style={{ flex: 1 }}>
+              <h2>Traversal Algorithm</h2>
+              <div className="algo-step">
+                <div className="step-badge" style={{ background: 'rgba(137,180,250,0.2)', color: '#89b4fa' }}>beginWork</div>
+                <div className="step-content">Called for each fiber top-down. Reconciles children (creates/updates/deletes child fibers), sets fiber.flags for later commit.</div>
+              </div>
+              <div className="algo-step">
+                <div className="step-badge" style={{ background: 'rgba(63,185,80,0.2)', color: '#3fb950' }}>child</div>
+                <div className="step-content">If fiber has a child, move to child next (go deeper).</div>
+              </div>
+              <div className="algo-step">
+                <div className="step-badge" style={{ background: 'rgba(63,185,80,0.2)', color: '#3fb950' }}>completeWork</div>
+                <div className="step-content">Called when no more children. Creates/updates real DOM node for host fibers. Builds "effect list" of fibers with side effects.</div>
+              </div>
+              <div className="algo-step">
+                <div className="step-badge" style={{ background: 'rgba(168,85,247,0.2)', color: '#a855f7' }}>sibling</div>
+                <div className="step-content">After completing, if there's a sibling, move to sibling (beginWork it next).</div>
+              </div>
+              <div className="algo-step">
+                <div className="step-badge" style={{ background: 'rgba(249,226,175,0.2)', color: '#f9e2af' }}>return</div>
+                <div className="step-content">If no sibling, return to parent (completeWork the parent).</div>
+              </div>
+
+              <div className="code" style={{ marginTop: 14 }}>
+                <div className="cm">// Simplified work loop</div>
+                <div><span className="kw">function</span> <span className="fn-name">performUnitOfWork</span>(unitOfWork) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="cm">// beginWork returns first child (or null)</span></div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> next = <span className="fn-name">beginWork</span>(</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;unitOfWork.alternate, <span className="cm">// current</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;unitOfWork,           <span className="cm">// workInProgress</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;renderLanes</div>
+                <div>&nbsp;&nbsp;);</div>
+                <div>&nbsp;&nbsp;<span className="kw">if</span> (next === null) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// No children → complete this fiber</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="fn-name">completeUnitOfWork</span>(unitOfWork);</div>
+                <div>&nbsp;&nbsp;{'}'} <span className="kw">else</span> {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Has children → process child next</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;workInProgress = next;</div>
+                <div>&nbsp;&nbsp;{'}'}</div>
+                <div>{'}'}</div>
+                <br/>
+                <div><span className="kw">function</span> <span className="fn-name">completeUnitOfWork</span>(unitOfWork) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">let</span> completedWork = unitOfWork;</div>
+                <div>&nbsp;&nbsp;<span className="kw">do</span> {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="fn-name">completeWork</span>(completedWork.alternate, completedWork);</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">const</span> siblingFiber = completedWork.sibling;</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">if</span> (siblingFiber !== null) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;workInProgress = siblingFiber; <span className="cm">// process sibling</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span>;</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;{'}'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;completedWork = completedWork.return; <span className="cm">// go up</span></div>
+                <div>&nbsp;&nbsp;{'}'} <span className="kw">while</span> (completedWork !== null);</div>
+                <div>{'}'}</div>
+              </div>
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>beginWork vs completeWork Responsibilities</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div className="explain" style={{ marginTop: 0 }}>
+                  <strong style={{ color: '#89b4fa' }}>beginWork — "What should be here?"</strong><br/><br/>
+                  • Calls component function / class render method<br/>
+                  • Reconciles returned children against existing fibers (diff algorithm)<br/>
+                  • Creates new fiber nodes for new elements<br/>
+                  • Marks fibers with flags (Placement, Update, Deletion)<br/>
+                  • Returns the first child fiber (or null)<br/><br/>
+                  Fiber types handled: FunctionComponent, ClassComponent, HostRoot,
+                  HostComponent (div/span), SuspenseComponent, MemoComponent, LazyComponent, etc.
+                </div>
+                <div className="explain" style={{ marginTop: 0 }}>
+                  <strong style={{ color: '#3fb950' }}>completeWork — "Build the DOM"</strong><br/><br/>
+                  • For host components (div, span): creates the real DOM node via <code>document.createElement</code><br/>
+                  • Sets initial DOM properties (style, className, event listeners)<br/>
+                  • Appends children DOM nodes to the parent DOM node<br/>
+                  • Collects fibers with effects into the "effect list"<br/>
+                  • Bubbles flags from children up to parents (subtreeFlags)<br/><br/>
+                  After completeWork finishes the root, the entire DOM tree is built in memory
+                  (not yet attached to the document — that happens in commit).
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

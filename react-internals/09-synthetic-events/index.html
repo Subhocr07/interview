@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>09 - Synthetic Events & Delegation</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 280px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .dom-tree { display: flex; flex-direction: column; align-items: center; gap: 0; }
+    .dom-node { border-radius: 8px; padding: 10px 18px; text-align: center; font-size: 13px; font-family: monospace; position: relative; cursor: pointer; transition: border-color 0.15s; }
+    .dom-node.root { background: #1a2a1a; border: 2px solid #3fb950; color: #3fb950; font-weight: 700; }
+    .dom-node.root::after { content: '← All React events attach HERE'; position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%); font-size: 10px; color: #3fb950; white-space: nowrap; }
+    .dom-node.div { background: #1a1a2a; border: 1px solid #4f46e5; color: #89b4fa; }
+    .dom-node.btn { background: #2a1a1a; border: 1px solid #f85149; color: #f85149; }
+    .dom-node.btn:hover { background: #3a1a1a; }
+    .dom-node.span { background: #2a2a1a; border: 1px solid #e3b341; color: #e3b341; }
+    .connector { height: 20px; width: 2px; background: #333; }
+    .bubble-path { display: flex; flex-direction: column; align-items: center; gap: 0; }
+    .bubble-arrow { color: #e3b341; font-size: 14px; padding: 2px 0; }
+    .event-log { background: #0d1117; border-radius: 8px; padding: 12px; max-height: 200px; overflow-y: auto; font-size: 11px; font-family: monospace; margin-top: 10px; }
+    .log-native { color: #e3b341; }
+    .log-synthetic { color: #89b4fa; }
+    .log-bubble { color: #a855f7; }
+    .log-capture { color: #f97316; }
+    .log-info { color: #666; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .hl { color: #f9e2af; }
+    .comparison-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+    .comparison-table th { background: #1a1a1a; padding: 6px 10px; text-align: left; color: #888; border-bottom: 1px solid #333; }
+    .comparison-table td { padding: 6px 10px; border-bottom: 1px solid #222; }
+    .comparison-table tr:last-child td { border-bottom: none; }
+    .badge-17 { color: #f85149; }
+    .badge-18 { color: #3fb950; }
+    .phase-label { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 700; margin-right: 4px; }
+    .phase-cap { background: rgba(249,115,22,0.15); color: #f97316; }
+    .phase-bub { background: rgba(168,85,247,0.15); color: #a855f7; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    function EventDelegationViz() {
+      const [log, setLog] = useState([]);
+
+      function addLog(msg, type) {
+        setLog(prev => [{ msg, type, t: Date.now() }, ...prev].slice(0, 20));
+      }
+
+      function handleRootClick(e) {
+        addLog(`[ROOT] React's delegated listener fires on #root container`, 'synthetic');
+        addLog(`[ROOT] Walks fiber tree upward, calling handlers in bubble order`, 'info');
+      }
+
+      function handleDivCapture(e) {
+        addLog(`[div - capture] onClickCapture fires BEFORE target`, 'capture');
+      }
+
+      function handleDivBubble(e) {
+        addLog(`[div] onClick fires (bubble)`, 'bubble');
+      }
+
+      function handleBtnClick(e) {
+        addLog(`[button] onClick fires — this is the target`, 'synthetic');
+        addLog(`Native event is on #root, not on this button`, 'info');
+      }
+
+      function stopBubble(e) {
+        e.stopPropagation();
+        addLog(`[button] stopPropagation() called — parent handlers won't fire`, 'native');
+      }
+
+      return (
+        <div>
+          <div style={{ background: '#0d1117', border: '2px solid #3fb950', borderRadius: 10, padding: 16, marginBottom: 14, position: 'relative' }}>
+            <div style={{ fontSize: 11, color: '#3fb950', marginBottom: 8, fontWeight: 700 }}>#root (React root container) — ALL events delegated here</div>
+            <div
+              style={{ background: '#0d1a2a', border: '1px solid #4f46e5', borderRadius: 8, padding: 12, cursor: 'pointer' }}
+              onClick={handleDivBubble}
+              onClickCapture={handleDivCapture}
+            >
+              <div style={{ fontSize: 11, color: '#89b4fa', marginBottom: 8 }}>&lt;div onClick onClickCapture&gt;</div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button style={{ fontSize: 12 }} onClick={handleBtnClick}>&lt;button onClick&gt; Click me</button>
+                <button style={{ fontSize: 12, borderColor: '#f85149', color: '#f85149' }} onClick={stopBubble}>stopPropagation()</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="event-log">
+            {log.length === 0 && <div className="log-info">Click a button to trace event flow...</div>}
+            {log.map((e, i) => (
+              <div key={i} className={`log-${e.type}`}>{e.msg}</div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function NativeVsReactDemo() {
+      const [log, setLog] = useState([]);
+      const btnRef = useRef(null);
+
+      useEffect(() => {
+        const el = btnRef.current;
+        if (!el) return;
+        const nativeHandler = () => {
+          setLog(prev => [{ msg: 'Native addEventListener fires (on button directly)', type: 'native' }, ...prev].slice(0, 10));
+        };
+        el.addEventListener('click', nativeHandler);
+        return () => el.removeEventListener('click', nativeHandler);
+      }, []);
+
+      function reactHandler() {
+        setLog(prev => [{ msg: 'React synthetic onClick fires (delegated to root)', type: 'synthetic' }, ...prev].slice(0, 10));
+      }
+
+      return (
+        <div>
+          <p style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>
+            In React 17+, React attaches listeners to the root container, not to individual DOM nodes.
+            This demo shows native listeners still work independently.
+          </p>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+            <button ref={btnRef} onClick={reactHandler}>Click (both native + React)</button>
+          </div>
+          <div className="event-log">
+            {log.length === 0 && <div className="log-info">Click to see native vs React event order</div>}
+            {log.map((e, i) => (
+              <div key={i} className={e.type === 'native' ? 'log-native' : 'log-synthetic'}>{e.msg}</div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>09 — Synthetic Events & Event Delegation</h1>
+          <p className="desc">
+            React does not attach event listeners to individual DOM nodes. Instead, it uses <span className="hl" style={{ color: '#f9e2af' }}>event delegation</span> —
+            a single listener on the root container catches all events. React then simulates bubbling/capturing through the fiber tree.
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>Event Delegation Visual</h2>
+              <EventDelegationViz />
+            </div>
+
+            <div className="panel">
+              <h2>Native vs React Listeners</h2>
+              <NativeVsReactDemo />
+
+              <div className="code" style={{ marginTop: 14 }}>
+                <div className="cm">// React 16: delegated to document</div>
+                <div>document.addEventListener(<span className="str">'click'</span>, reactHandler);</div>
+                <br/>
+                <div className="cm">// React 17+: delegated to root container</div>
+                <div className="cm">// (fixes iframe, multiple React roots, etc.)</div>
+                <div>rootContainer.addEventListener(<span className="str">'click'</span>, reactHandler, {'{'}<span className="kw">capture</span>: <span className="kw">true</span>{'}'});</div>
+                <div>rootContainer.addEventListener(<span className="str">'click'</span>, reactHandler, {'{'}<span className="kw">capture</span>: <span className="kw">false</span>{'}'});</div>
+                <br/>
+                <div className="cm">// React walks the fiber tree upward and calls</div>
+                <div className="cm">// capture handlers top-down, bubble handlers bottom-up</div>
+                <div><span className="kw">function</span> <span className="fn-name">traverseFiberTree</span>(targetFiber, event) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="cm">// Phase 1: collect capture handlers (root → target)</span></div>
+                <div>&nbsp;&nbsp;<span className="cm">// Phase 2: collect bubble handlers (target → root)</span></div>
+                <div>&nbsp;&nbsp;<span className="cm">// Execute in order, respecting stopPropagation()</span></div>
+                <div>{'}'}</div>
+              </div>
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>Key Facts About Synthetic Events</h2>
+              <table className="comparison-table">
+                <thead>
+                  <tr><th>Topic</th><th>React 16</th><th>React 17+</th></tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['Delegation target', 'document', '#root container'],
+                    ['Event pooling', 'SyntheticEvent pooled (e.persist() needed)', 'Removed — no pooling, simpler'],
+                    ['Async access', 'e.persist() or copy props first', 'Works natively — no pooling'],
+                    ['Multiple roots', 'Conflicts (all on document)', 'Each root has its own listeners'],
+                    ['stopPropagation', 'Stops React bubbling only', 'Stops React + native bubbling from root'],
+                  ].map(([topic, v17, v18]) => (
+                    <tr key={topic}>
+                      <td style={{ color: '#888' }}>{topic}</td>
+                      <td className="badge-17">{v17}</td>
+                      <td className="badge-18">{v18}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="explain" style={{ marginTop: 14 }}>
+                <strong style={{ color: '#89b4fa' }}>Why event delegation?</strong><br/><br/>
+                1. <span className="hl">Performance</span>: One listener instead of N listeners for N elements. Especially for large lists — no listener per row.<br/>
+                2. <span className="hl">Dynamic elements</span>: New elements added to the DOM automatically "work" — no need to re-attach listeners.<br/>
+                3. <span className="hl">Memory</span>: Fewer listener objects = less memory consumption.<br/>
+                4. <span className="hl">Cross-browser consistency</span>: React normalizes event properties across browsers (e.g., IE quirks).<br/><br/>
+                <strong>Capture vs Bubble phase:</strong><br/>
+                <span style={{ color: '#f97316' }}>Capture (top→down):</span> <code>onClickCapture</code>, fires before the target<br/>
+                <span style={{ color: '#a855f7' }}>Bubble (bottom→up):</span> <code>onClick</code>, fires after the target (default)<br/><br/>
+                <strong>e.stopPropagation()</strong> stops React's synthetic traversal.<br/>
+                <strong>e.nativeEvent.stopImmediatePropagation()</strong> stops the underlying native event.
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

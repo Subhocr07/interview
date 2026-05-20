@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>18 - forwardRef & useImperativeHandle</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .demo-input { background: #0d1117; border: 2px solid #333; color: #e0e0e0; padding: 10px 14px; border-radius: 8px; font-size: 14px; width: 100%; transition: border-color 0.2s; }
+    .demo-input:focus { outline: none; border-color: #89b4fa; }
+    .demo-input.shake { animation: shake 0.4s; border-color: #f85149; }
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-8px); }
+      75% { transform: translateX(8px); }
+    }
+    .ref-arrow { color: #a855f7; font-size: 11px; margin: 4px 0; padding-left: 16px; }
+    .demo-video { background: #0d1117; border: 1px solid #333; border-radius: 8px; overflow: hidden; }
+    .video-bar { height: 6px; background: #1a1a1a; position: relative; cursor: pointer; margin-top: 8px; }
+    .video-progress { height: 100%; background: #89b4fa; transition: width 0.1s; }
+    .video-controls { display: flex; gap: 8px; padding: 10px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useRef, useImperativeHandle, forwardRef, useState, useEffect } = React;
+
+    // ─── 1. Basic forwardRef ──────────────────────────────────────────
+    const FancyInput = forwardRef(function FancyInput({ placeholder, onValidate }, ref) {
+      const inputRef = useRef(null);
+      const [error, setError] = useState(false);
+
+      useImperativeHandle(ref, () => ({
+        focus() {
+          inputRef.current.focus();
+        },
+        shake() {
+          setError(true);
+          inputRef.current.classList.add('shake');
+          setTimeout(() => {
+            setError(false);
+            inputRef.current?.classList.remove('shake');
+          }, 400);
+        },
+        getValue() {
+          return inputRef.current?.value ?? '';
+        },
+        clear() {
+          if (inputRef.current) inputRef.current.value = '';
+        },
+        // Not exposing: inputRef itself — intentionally encapsulated
+      }));
+
+      return (
+        <input
+          ref={inputRef}
+          className="demo-input"
+          placeholder={placeholder}
+          style={{ borderColor: error ? '#f85149' : undefined }}
+        />
+      );
+    });
+
+    function InputDemo() {
+      const fancyRef = useRef(null);
+      const [log, setLog] = useState([]);
+
+      function addLog(msg) {
+        setLog(prev => [msg, ...prev].slice(0, 8));
+      }
+
+      return (
+        <div>
+          <FancyInput ref={fancyRef} placeholder="FancyInput (controlled via ref)" />
+          <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            <button onClick={() => { fancyRef.current?.focus(); addLog('focus() called'); }}>
+              focus()
+            </button>
+            <button onClick={() => { fancyRef.current?.shake(); addLog('shake() called'); }}>
+              shake()
+            </button>
+            <button onClick={() => { const v = fancyRef.current?.getValue(); addLog(`getValue() → "${v}"`); }}>
+              getValue()
+            </button>
+            <button onClick={() => { fancyRef.current?.clear(); addLog('clear() called'); }}>
+              clear()
+            </button>
+          </div>
+          {log.length > 0 && (
+            <div style={{ background: '#0d1117', borderRadius: 6, padding: 10, marginTop: 10, fontFamily: 'monospace', fontSize: 11 }}>
+              {log.map((l, i) => <div key={i} style={{ color: '#89b4fa' }}>{l}</div>)}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ─── 2. Video player with imperative handle ───────────────────────
+    const VideoPlayer = forwardRef(function VideoPlayer({ title }, ref) {
+      const [playing, setPlaying] = useState(false);
+      const [progress, setProgress] = useState(0);
+      const timerRef = useRef(null);
+
+      useImperativeHandle(ref, () => ({
+        play() {
+          setPlaying(true);
+          timerRef.current = setInterval(() => {
+            setProgress(p => {
+              if (p >= 100) { clearInterval(timerRef.current); setPlaying(false); return 100; }
+              return p + 2;
+            });
+          }, 100);
+        },
+        pause() {
+          clearInterval(timerRef.current);
+          setPlaying(false);
+        },
+        seek(pct) {
+          setProgress(Math.max(0, Math.min(100, pct)));
+        },
+        reset() {
+          clearInterval(timerRef.current);
+          setPlaying(false);
+          setProgress(0);
+        },
+      }));
+
+      useEffect(() => () => clearInterval(timerRef.current), []);
+
+      return (
+        <div className="demo-video">
+          <div style={{ padding: '14px 14px 0', fontSize: 13, color: '#cdd6f4' }}>{title}</div>
+          <div style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 48, height: 36, background: '#1a1a2a', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+              {playing ? '▶' : '⏸'}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="video-bar" onClick={e => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const pct = ((e.clientX - rect.left) / rect.width) * 100;
+                setProgress(pct);
+              }}>
+                <div className="video-progress" style={{ width: `${progress}%` }} />
+              </div>
+              <div style={{ fontSize: 10, color: '#555', marginTop: 4 }}>{progress.toFixed(0)}%</div>
+            </div>
+          </div>
+        </div>
+      );
+    });
+
+    function VideoDemo() {
+      const playerRef = useRef(null);
+
+      return (
+        <div>
+          <VideoPlayer ref={playerRef} title="Big Buck Bunny (simulated)" />
+          <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            <button onClick={() => playerRef.current?.play()}>▶ Play</button>
+            <button onClick={() => playerRef.current?.pause()}>⏸ Pause</button>
+            <button onClick={() => playerRef.current?.seek(50)}>⏩ Seek 50%</button>
+            <button onClick={() => playerRef.current?.reset()}>↺ Reset</button>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>18 — forwardRef & useImperativeHandle</h1>
+          <p className="desc">
+            <code>forwardRef</code> allows a parent to pass a <code>ref</code> to a DOM element inside a child component.
+            <code>useImperativeHandle</code> customizes what the ref exposes — instead of the raw DOM node,
+            you expose a controlled API (focus, shake, play, etc.).
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>forwardRef + useImperativeHandle: Input</h2>
+              <InputDemo />
+
+              <div className="explain">
+                <strong style={{ color: '#89b4fa' }}>Why useImperativeHandle?</strong><br/><br/>
+                Without it, <code>ref.current</code> would be the raw <code>&lt;input&gt;</code> DOM node —
+                exposing everything (value, style, all DOM APIs). useImperativeHandle lets you:
+                <br/><br/>
+                • Expose only the API the parent should use<br/>
+                • Add higher-level methods (shake = animate + reset state)<br/>
+                • Keep internal DOM structure private (encapsulation)<br/>
+                • The parent doesn't need to know about the internal ref
+              </div>
+            </div>
+
+            <div className="panel">
+              <h2>forwardRef: Video Player</h2>
+              <VideoDemo />
+
+              <div className="code" style={{ marginTop: 14 }}>
+                <div className="cm">// forwardRef internals</div>
+                <div><span className="kw">function</span> <span className="fn-name">forwardRef</span>(render) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">return</span> {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;$$typeof: REACT_FORWARD_REF_TYPE,</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;render, <span className="cm">// fn(props, ref)</span></div>
+                <div>&nbsp;&nbsp;{'}'};</div>
+                <div>{'}'}</div>
+                <br/>
+                <div className="cm">// During reconciliation, React calls:</div>
+                <div><span className="fn-name">renderWithHooks</span>(current, wip, render, props, ref, ...);</div>
+                <div className="cm">// Note: ref is passed as the SECOND argument!</div>
+                <div className="cm">// Normal function components get no second arg</div>
+                <br/>
+                <div className="cm">// useImperativeHandle implementation</div>
+                <div><span className="kw">function</span> <span className="fn-name">mountImperativeHandle</span>(ref, create, deps) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="cm">// It's just a special useLayoutEffect</span></div>
+                <div>&nbsp;&nbsp;<span className="kw">return</span> <span className="fn-name">mountEffectImpl</span>(</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;UpdateEffect, <span className="cm">// HookLayout flag</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;HookLayout,</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;() =&gt; {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">if</span> (<span className="kw">typeof</span> ref === <span className="str">'function'</span>) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ref(create()); <span className="cm">// callback ref</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{'}'} <span className="kw">else if</span> (ref !== null) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ref.current = create(); <span className="cm">// object ref</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{'}'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> () =&gt; {'{'} ref.current = null; {'}'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;{'}'},</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;deps</div>
+                <div>&nbsp;&nbsp;);</div>
+                <div>{'}'}</div>
+              </div>
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>ref Types & Patterns</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                <div className="code">
+                  <div style={{ color: '#89b4fa', marginBottom: 8, fontSize: 11 }}>Object ref (useRef)</div>
+                  <div><span className="kw">const</span> ref = useRef(null);</div>
+                  <div className="cm">// ref.current starts as null</div>
+                  <div className="cm">// React sets ref.current = DOM node</div>
+                  <div className="cm">// after commit (before useEffect)</div>
+                  <br/>
+                  <div>&lt;input ref={'{ref}'} /&gt;</div>
+                  <br/>
+                  <div className="cm">// In useEffect:</div>
+                  <div>ref.current.focus(); <span className="cm">// safe ✓</span></div>
+                </div>
+                <div className="code">
+                  <div style={{ color: '#a855f7', marginBottom: 8, fontSize: 11 }}>Callback ref</div>
+                  <div className="cm">// Called with the DOM node on mount,</div>
+                  <div className="cm">// called with null on unmount</div>
+                  <br/>
+                  <div><span className="kw">function</span> <span className="fn-name">callbackRef</span>(node) {'{'}</div>
+                  <div>&nbsp;&nbsp;<span className="kw">if</span> (node) {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;node.focus();</div>
+                  <div>&nbsp;&nbsp;{'}'}</div>
+                  <div>{'}'}</div>
+                  <div>&lt;input ref={'{callbackRef}'} /&gt;</div>
+                  <br/>
+                  <div className="cm">// Good for: measuring DOM immediately</div>
+                  <div className="cm">// after mount, without useEffect</div>
+                </div>
+                <div className="code">
+                  <div style={{ color: '#3fb950', marginBottom: 8, fontSize: 11 }}>createRef (class components)</div>
+                  <div className="cm">// Class component equivalent</div>
+                  <div className="cm">// of useRef — creates a new ref</div>
+                  <div className="cm">// object on every render</div>
+                  <br/>
+                  <div><span className="kw">class</span> <span className="fn-name">Input</span> <span className="kw">extends</span> React.Component {'{'}</div>
+                  <div>&nbsp;&nbsp;inputRef = React.createRef();</div>
+                  <div>&nbsp;&nbsp;<span className="fn-name">render</span>() {'{'}</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> &lt;input ref={'{this.inputRef}'} /&gt;;</div>
+                  <div>&nbsp;&nbsp;{'}'}</div>
+                  <div>{'}'}</div>
+                  <br/>
+                  <div className="cm">// useRef in functions is preferred</div>
+                  <div className="cm">// (same object across renders)</div>
+                </div>
+              </div>
+              <div className="explain" style={{ marginTop: 16 }}>
+                <strong style={{ color: '#f9e2af' }}>When to use refs vs state</strong><br/><br/>
+                <strong>Use refs for:</strong> DOM manipulation (focus, scroll, play/pause), values that change but don't need to trigger re-render (timers, previous value tracking, animation frame IDs).<br/>
+                <strong>Use state for:</strong> Anything that should update the UI when it changes.<br/><br/>
+                <strong>Rule:</strong> If changing the value should cause a re-render → state. If it shouldn't → ref.
+                Storing the same mutable value in both ref and state (to avoid stale closures) is a valid pattern.
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

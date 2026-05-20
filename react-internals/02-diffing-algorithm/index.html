@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>02 - Diffing Algorithm</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .rules { display: flex; flex-direction: column; gap: 20px; }
+    .rule { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; }
+    .rule-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .rule-num { width: 28px; height: 28px; background: #4f46e5; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+    .rule-title { font-size: 15px; font-weight: 600; color: #89b4fa; }
+    .rule-subtitle { font-size: 12px; color: #888; margin-top: 2px; }
+    .demo { display: flex; gap: 16px; margin-bottom: 14px; align-items: center; }
+    .tree-box { background: #111; border-radius: 8px; padding: 12px; flex: 1; font-family: monospace; font-size: 12px; }
+    .tree-box h4 { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 8px; }
+    .arrow { font-size: 20px; color: #444; }
+    .result-box { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; font-size: 12px; font-family: monospace; }
+    .result-box h4 { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 8px; }
+    .tag { color: #79c0ff; }
+    .attr { color: #d2a8ff; }
+    .val { color: #a5d6ff; }
+    .text { color: #e3b341; }
+    .destroy { color: #f85149; text-decoration: line-through; }
+    .create { color: #3fb950; }
+    .update { color: #e3b341; }
+    .same { color: #666; }
+    .op { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; margin-right: 6px; }
+    .op-destroy { background: rgba(248,81,73,0.15); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+    .op-create { background: rgba(63,185,80,0.15); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+    .op-update { background: rgba(227,179,65,0.15); color: #e3b341; border: 1px solid rgba(227,179,65,0.3); }
+    .op-skip { background: rgba(100,100,100,0.15); color: #666; border: 1px solid rgba(100,100,100,0.3); }
+    .explain { font-size: 13px; color: #cdd6f4; line-height: 1.6; background: #111; border-radius: 6px; padding: 12px; margin-top: 10px; }
+    .explain code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .interactive { margin-top: 14px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 8px; }
+    button:hover { background: #30363d; }
+    button.active { background: #4f46e5; border-color: #4f46e5; color: #fff; }
+    .dom-ops { display: flex; flex-direction: column; gap: 4px; }
+    .dom-op { padding: 6px 10px; border-radius: 4px; font-size: 12px; font-family: monospace; display: flex; align-items: center; gap: 8px; }
+    .dom-op.destroy { background: rgba(248,81,73,0.1); border-left: 3px solid #f85149; }
+    .dom-op.create { background: rgba(63,185,80,0.1); border-left: 3px solid #3fb950; }
+    .dom-op.update { background: rgba(227,179,65,0.1); border-left: 3px solid #e3b341; }
+    .dom-op.skip { background: rgba(100,100,100,0.05); border-left: 3px solid #444; color: #555; }
+    .big-title { font-size: 14px; font-weight: 700; color: #cba6f7; margin-bottom: 16px; border-bottom: 1px solid #333; padding-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState } = React;
+
+    function Rule1() {
+      const [scenario, setScenario] = useState('same');
+      const scenarios = {
+        same: {
+          label: 'div → div',
+          before: '<div className="card"><p>Hello</p></div>',
+          after: '<div className="card active"><p>Hello</p></div>',
+          ops: [
+            { type: 'update', msg: 'DOM node reused — only props updated', detail: 'className: "card" → "card active"' },
+            { type: 'skip', msg: 'Children recursively diffed', detail: '<p> is same type → recurse' },
+          ],
+          explain: 'Same element type → React reuses the DOM node. Only prop changes are applied via DOM setAttribute(). The component instance is preserved.'
+        },
+        diff: {
+          label: 'div → section',
+          before: '<div className="card"><Counter /></div>',
+          after: '<section className="card"><Counter /></section>',
+          ops: [
+            { type: 'destroy', msg: 'DESTROY entire subtree', detail: 'div + all children unmounted, state lost' },
+            { type: 'create', msg: 'CREATE new subtree from scratch', detail: 'section + new Counter instance mounted' },
+          ],
+          explain: 'Different element type → React tears down the entire old tree and builds a new one. All state in child components is LOST. This is why wrapping with different elements causes re-mounts.'
+        },
+        component: {
+          label: '<Button> → <Link>',
+          before: '<Button onClick={fn}>Click</Button>',
+          after: '<Link href="/home">Click</Link>',
+          ops: [
+            { type: 'destroy', msg: 'Unmount Button', detail: 'componentWillUnmount / cleanup effects run' },
+            { type: 'create', msg: 'Mount Link', detail: 'New instance created, componentDidMount / effects run' },
+          ],
+          explain: 'Different component type → React calls cleanup on Button and creates a fresh Link. Even if they look similar, React treats them as completely different trees.'
+        },
+      };
+      const s = scenarios[scenario];
+      return (
+        <div className="rule">
+          <div className="rule-header">
+            <div className="rule-num">1</div>
+            <div>
+              <div className="rule-title">Rule: Element Type Comparison</div>
+              <div className="rule-subtitle">O(1) check — same type → update, different type → destroy & recreate</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            {Object.entries(scenarios).map(([k, v]) => (
+              <button key={k} className={scenario === k ? 'active' : ''} onClick={() => setScenario(k)}>{v.label}</button>
+            ))}
+          </div>
+          <div className="demo">
+            <div className="tree-box"><h4>Before</h4><span className="tag">{s.before}</span></div>
+            <div className="arrow">→</div>
+            <div className="tree-box"><h4>After</h4><span className="create">{s.after}</span></div>
+          </div>
+          <div className="dom-ops">
+            {s.ops.map((op, i) => (
+              <div key={i} className={`dom-op ${op.type}`}>
+                <span className={`op op-${op.type}`}>{op.type.toUpperCase()}</span>
+                <span>{op.msg}</span>
+                <span style={{ color: '#666', marginLeft: 'auto', fontSize: 11 }}>{op.detail}</span>
+              </div>
+            ))}
+          </div>
+          <div className="explain">{s.explain}</div>
+        </div>
+      );
+    }
+
+    function Rule2() {
+      return (
+        <div className="rule">
+          <div className="rule-header">
+            <div className="rule-num">2</div>
+            <div>
+              <div className="rule-title">Rule: DOM Element Attribute Diffing</div>
+              <div className="rule-subtitle">When same type — only changed attributes are updated in the real DOM</div>
+            </div>
+          </div>
+          <div className="demo">
+            <div className="tree-box">
+              <h4>Old VDOM</h4>
+              <div><span className="tag">&lt;input</span></div>
+              <div>&nbsp;&nbsp;<span className="attr">type</span>=<span className="val">"text"</span></div>
+              <div>&nbsp;&nbsp;<span className="attr">value</span>=<span className="val">"hello"</span></div>
+              <div>&nbsp;&nbsp;<span className="attr">className</span>=<span className="val">"input"</span></div>
+              <div>&nbsp;&nbsp;<span className="attr">disabled</span>=<span className="val">{'{false}'}</span></div>
+              <div><span className="tag">/&gt;</span></div>
+            </div>
+            <div className="arrow">→</div>
+            <div className="tree-box">
+              <h4>New VDOM</h4>
+              <div><span className="tag">&lt;input</span></div>
+              <div>&nbsp;&nbsp;<span className="attr">type</span>=<span className="val">"text"</span> <span className="same">(same)</span></div>
+              <div>&nbsp;&nbsp;<span className="attr">value</span>=<span className="update">"world"</span> <span style={{ color: '#e3b341', fontSize: 11 }}>← CHANGED</span></div>
+              <div>&nbsp;&nbsp;<span className="attr">className</span>=<span className="val">"input"</span> <span className="same">(same)</span></div>
+              <div>&nbsp;&nbsp;<span className="attr">disabled</span>=<span className="update">{'{true}'}</span> <span style={{ color: '#e3b341', fontSize: 11 }}>← CHANGED</span></div>
+              <div><span className="tag">/&gt;</span></div>
+            </div>
+          </div>
+          <div className="dom-ops">
+            <div className="dom-op skip"><span className="op op-skip">SKIP</span>type, className unchanged → no DOM call</div>
+            <div className="dom-op update"><span className="op op-update">UPDATE</span>node.setAttribute('value', 'world') → 1 DOM call</div>
+            <div className="dom-op update"><span className="op op-update">UPDATE</span>node.setAttribute('disabled', true) → 1 DOM call</div>
+          </div>
+          <div className="explain">
+            React iterates over all props and compares old vs new using <code>Object.is()</code>. Only attributes that changed trigger a DOM call. Style objects are diffed per-property. Event handlers are added/removed via the root event delegation system.
+          </div>
+        </div>
+      );
+    }
+
+    function Rule3() {
+      return (
+        <div className="rule">
+          <div className="rule-header">
+            <div className="rule-num">3</div>
+            <div>
+              <div className="rule-title">Rule: Recursing on Children (the naive O(n³) vs O(n) insight)</div>
+              <div className="rule-subtitle">React's heuristic reduces diffing from O(n³) to O(n)</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <div className="tree-box" style={{ marginBottom: 10 }}>
+                <h4>❌ Naive full-tree diff — O(n³)</h4>
+                <div style={{ color: '#888', fontSize: 12, lineHeight: 1.6 }}>
+                  The optimal tree diff algorithm (Zhang-Shasha) is O(n³).<br/>
+                  For 1000 elements: 1,000,000,000 comparisons.<br/>
+                  Completely impractical for UIs.
+                </div>
+              </div>
+              <div className="tree-box">
+                <h4>✅ React's heuristics — O(n)</h4>
+                <div style={{ color: '#a6e3a1', fontSize: 12, lineHeight: 1.8 }}>
+                  1. Only compare nodes at the <strong>same level</strong> (no cross-level moves)<br/>
+                  2. If <strong>element type differs</strong> → destroy subtree (stop recursing)<br/>
+                  3. Use <strong>keys</strong> to match list items by identity<br/>
+                  4. Walk the tree once → O(n)
+                </div>
+              </div>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div className="tree-box">
+                <h4>Cross-level move — React's assumption</h4>
+                <div style={{ color: '#888', fontSize: 12, lineHeight: 1.6, marginBottom: 8 }}>
+                  If you move a &lt;ul&gt; from one parent to another, React does NOT detect the move.
+                  It destroys the old and creates a new one (even if identical content).
+                </div>
+                <div style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                  <div style={{ color: '#f85149' }}>Before: &lt;div&gt;&lt;ul&gt;...&lt;/ul&gt;&lt;/div&gt;</div>
+                  <div style={{ color: '#3fb950' }}>After:  &lt;section&gt;&lt;ul&gt;...&lt;/ul&gt;&lt;/section&gt;</div>
+                  <div style={{ color: '#e3b341', marginTop: 6 }}>→ div destroyed, section created, ul destroyed + recreated</div>
+                  <div style={{ color: '#888', fontSize: 11, marginTop: 6 }}>React assumes cross-level moves are rare in typical UIs.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>02 — Diffing Algorithm (Reconciliation)</h1>
+          <p className="desc">
+            React's reconciler compares the new VDOM tree against the previous one using a set of heuristics that reduce complexity from O(n³) to O(n).
+            Understanding these rules explains why certain patterns (wrong key types, different element wrapping) cause unexpected re-mounts.
+          </p>
+          <div className="rules">
+            <Rule1 />
+            <Rule2 />
+            <Rule3 />
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

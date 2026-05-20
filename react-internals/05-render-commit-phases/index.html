@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>05 - Render vs Commit Phases</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .phases { display: flex; gap: 0; margin-bottom: 24px; }
+    .phase { flex: 1; padding: 20px; }
+    .phase.render { background: #0d1b2a; border: 1px solid #1e3a5f; border-radius: 10px 0 0 10px; }
+    .phase.commit { background: #0d2a1a; border: 1px solid #1e5f3a; border-radius: 0 10px 10px 0; }
+    .phase-header { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+    .phase.render .phase-header { color: #79c0ff; }
+    .phase.commit .phase-header { color: #3fb950; }
+    .phase-sub { font-size: 12px; color: #888; margin-bottom: 14px; }
+    .step { padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; font-size: 12px; display: flex; align-items: flex-start; gap: 8px; }
+    .step.render-step { background: rgba(121,192,255,0.08); border-left: 3px solid #79c0ff; }
+    .step.commit-step { background: rgba(63,185,80,0.08); border-left: 3px solid #3fb950; }
+    .step.interrupt { background: rgba(248,81,73,0.08); border-left: 3px solid #f85149; }
+    .step-icon { flex-shrink: 0; font-size: 14px; }
+    .step-text { color: #cdd6f4; line-height: 1.5; }
+    .step-sub { color: #888; font-size: 11px; }
+    .vs-divider { display: flex; align-items: center; justify-content: center; width: 50px; background: #1a1a1a; }
+    .vs { font-size: 12px; color: #666; font-weight: 700; }
+    .demo { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+    .demo h3 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    .timeline { position: relative; padding-left: 120px; }
+    .tl-phase { position: absolute; left: 0; width: 110px; font-size: 11px; font-weight: 700; display: flex; align-items: center; }
+    .tl-render { color: #79c0ff; }
+    .tl-commit { color: #3fb950; }
+    .tl-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid #222; font-size: 12px; font-family: monospace; }
+    .tl-row:last-child { border-bottom: none; }
+    .tl-tag { width: 180px; flex-shrink: 0; }
+    .tl-desc { color: #888; }
+    .tl-interruptible { color: #79c0ff; }
+    .tl-sync { color: #f85149; }
+    .log-panel { background: #0d1117; border-radius: 8px; padding: 14px; font-size: 12px; font-family: monospace; max-height: 240px; overflow-y: auto; }
+    .log-entry { padding: 2px 0; }
+    .log-render { color: #79c0ff; }
+    .log-layout { color: #f9e2af; }
+    .log-effect { color: #3fb950; }
+    .log-cleanup { color: #f85149; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 8px; margin-bottom: 14px; }
+    button:hover { background: #30363d; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; }
+    .hl { color: #f9e2af; }
+    .key-point { background: #1a1a2e; border: 1px solid #4f46e5; border-radius: 6px; padding: 10px 14px; margin-top: 10px; font-size: 12px; }
+    .key-point .label { color: #89b4fa; font-weight: 700; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useLayoutEffect, useRef } = React;
+
+    const logs = [];
+    function addLog(msg, type) { logs.unshift({ msg, type, time: performance.now().toFixed(1) }); }
+
+    function TrackedComponent({ name, children }) {
+      const renderTime = useRef(performance.now());
+      addLog(`${name}: render() called`, 'render');
+
+      useLayoutEffect(() => {
+        addLog(`${name}: useLayoutEffect (DOM mutated, before paint)`, 'layout');
+        return () => addLog(`${name}: useLayoutEffect cleanup`, 'cleanup');
+      });
+
+      useEffect(() => {
+        addLog(`${name}: useEffect (after paint)`, 'effect');
+        return () => addLog(`${name}: useEffect cleanup`, 'cleanup');
+      });
+
+      return children || null;
+    }
+
+    function LiveDemo() {
+      const [count, setCount] = useState(0);
+      const [logEntries, setLogEntries] = useState([]);
+
+      function trigger() {
+        logs.length = 0;
+        setCount(c => c + 1);
+        // Give React time to finish, then capture logs
+        setTimeout(() => setLogEntries([...logs]), 50);
+      }
+
+      return (
+        <div className="demo">
+          <h3>Live Phase Order Demo</h3>
+          <p style={{ fontSize: 12, color: '#888', marginBottom: 10 }}>Click to trigger a state update and observe the exact order of render → layout → paint → effect</p>
+          <button onClick={trigger}>Trigger Update (count={count})</button>
+
+          <TrackedComponent name="Parent">
+            <TrackedComponent name="Child" />
+          </TrackedComponent>
+
+          <div className="log-panel">
+            {logEntries.length === 0 && <div style={{ color: '#444' }}>Click the button to see the phase order...</div>}
+            {logEntries.map((e, i) => (
+              <div key={i} className={`log-entry log-${e.type}`}>
+                [{e.time}ms] {e.msg}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>05 — Render Phase vs Commit Phase</h1>
+          <p className="desc">
+            Every React update goes through two distinct phases. The <span style={{ color: '#79c0ff' }}>Render Phase</span> is pure and interruptible (in Concurrent Mode).
+            The <span style={{ color: '#3fb950' }}>Commit Phase</span> is synchronous and cannot be interrupted — it applies all DOM mutations.
+          </p>
+
+          <div className="phases">
+            <div className="phase render">
+              <div className="phase-header">① Render Phase</div>
+              <div className="phase-sub">Pure, interruptible (Concurrent Mode), no side effects</div>
+
+              <div className="step render-step">
+                <span className="step-icon">📋</span>
+                <div className="step-text">
+                  <strong>beginWork(fiber)</strong><br/>
+                  <span className="step-sub">Calls your component function (or render()). Produces React elements. Reconciles children against the previous fiber tree.</span>
+                </div>
+              </div>
+              <div className="step render-step">
+                <span className="step-icon">🔄</span>
+                <div className="step-text">
+                  <strong>reconcileChildren()</strong><br/>
+                  <span className="step-sub">Diffs old fiber children against new elements. Creates/reuses/deletes child fibers. Marks fibers with effect flags (Placement, Update, Deletion).</span>
+                </div>
+              </div>
+              <div className="step render-step">
+                <span className="step-icon">✅</span>
+                <div className="step-text">
+                  <strong>completeWork(fiber)</strong><br/>
+                  <span className="step-sub">For DOM elements: creates the actual DOM node (but doesn't insert it yet). Collects props for the DOM update.</span>
+                </div>
+              </div>
+              <div className="step interrupt">
+                <span className="step-icon">⏸</span>
+                <div className="step-text">
+                  <strong>Can be interrupted!</strong><br/>
+                  <span className="step-sub">In Concurrent Mode, if the browser needs the main thread (user input, animation), React yields and resumes this phase later. Your component function may be called multiple times!</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="vs-divider"><span className="vs">→</span></div>
+
+            <div className="phase commit">
+              <div className="phase-header">② Commit Phase</div>
+              <div className="phase-sub">Synchronous, cannot be interrupted, touches real DOM</div>
+
+              <div className="step commit-step">
+                <span className="step-icon">🔴</span>
+                <div className="step-text">
+                  <strong>Before Mutation (beforeMutationEffects)</strong><br/>
+                  <span className="step-sub">Calls getSnapshotBeforeUpdate on class components. Schedules useEffect cleanups.</span>
+                </div>
+              </div>
+              <div className="step commit-step">
+                <span className="step-icon">🟡</span>
+                <div className="step-text">
+                  <strong>Mutation (mutationEffects)</strong><br/>
+                  <span className="step-sub">Actually inserts/updates/deletes DOM nodes. Calls ref cleanup. Runs useLayoutEffect cleanup from previous render.</span>
+                </div>
+              </div>
+              <div className="step commit-step">
+                <span className="step-icon">🟢</span>
+                <div className="step-text">
+                  <strong>Layout (layoutEffects)</strong><br/>
+                  <span className="step-sub">Runs useLayoutEffect callbacks synchronously. At this point the DOM is updated but the browser hasn't painted yet. Can measure DOM.</span>
+                </div>
+              </div>
+              <div className="step commit-step">
+                <span className="step-icon">🎨</span>
+                <div className="step-text">
+                  <strong>Browser Paints</strong><br/>
+                  <span className="step-sub">React releases control. Browser renders the committed DOM to screen.</span>
+                </div>
+              </div>
+              <div className="step commit-step">
+                <span className="step-icon">✨</span>
+                <div className="step-text">
+                  <strong>Passive Effects (useEffect)</strong><br/>
+                  <span className="step-sub">useEffect callbacks run asynchronously after paint. Safe for network requests, subscriptions, timers.</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <LiveDemo />
+
+          <div className="demo">
+            <h3>Execution Order for Nested Components</h3>
+            <div className="timeline">
+              <div style={{ position: 'relative' }}>
+                {[
+                  { phase: 'RENDER', label: 'render()', desc: 'Parent component function called', cls: 'tl-interruptible' },
+                  { phase: 'RENDER', label: 'render()', desc: 'Child component function called', cls: 'tl-interruptible' },
+                  { phase: 'COMMIT', label: 'DOM mutations', desc: 'Parent DOM inserted/updated', cls: 'tl-sync' },
+                  { phase: 'COMMIT', label: 'DOM mutations', desc: 'Child DOM inserted/updated', cls: 'tl-sync' },
+                  { phase: 'COMMIT', label: 'useLayoutEffect', desc: 'Child layout effect (bottom-up!)', cls: 'tl-sync' },
+                  { phase: 'COMMIT', label: 'useLayoutEffect', desc: 'Parent layout effect (bottom-up!)', cls: 'tl-sync' },
+                  { phase: '🎨', label: 'Browser paint', desc: 'Screen updated', cls: '' },
+                  { phase: 'PASSIVE', label: 'useEffect', desc: 'Child effect (bottom-up!)', cls: 'tl-interruptible' },
+                  { phase: 'PASSIVE', label: 'useEffect', desc: 'Parent effect (bottom-up!)', cls: 'tl-interruptible' },
+                ].map((row, i) => (
+                  <div key={i} className="tl-row">
+                    <span className={`tl-phase tl-${row.phase === 'RENDER' ? 'render' : row.phase === 'COMMIT' || row.phase === 'PASSIVE' ? 'commit' : ''}`} style={{ position: 'absolute', left: 0, width: 110 }}>
+                      {row.phase}
+                    </span>
+                    <span className={`tl-tag ${row.cls}`}>{row.label}</span>
+                    <span className="tl-desc">{row.desc}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="key-point" style={{ marginTop: 14 }}>
+              <div className="label">Key insight: effects run bottom-up (children before parents)</div>
+              This ensures children are fully committed before parent effects run.
+              useLayoutEffect can safely measure child DOM nodes because they're already in the document.
+            </div>
+          </div>
+
+          <div className="explain">
+            <strong style={{ color: '#89b4fa' }}>Why two phases? Why can't it be one pass?</strong><br/><br/>
+            The render phase might <span className="hl">process the same fiber multiple times</span> in Concurrent Mode (if interrupted and resumed).
+            If side effects (DOM mutations, data fetching) ran during the render phase, they'd fire multiple times — causing bugs.<br/><br/>
+            The commit phase is <span className="hl">always synchronous</span> because the DOM must be updated atomically.
+            A partial DOM update visible to the user would cause visual glitches or layout thrash.<br/><br/>
+            <strong>Practical implications:</strong><br/>
+            • Never perform side effects directly in a function component body — it runs during the render phase and may execute multiple times<br/>
+            • <code>useLayoutEffect</code> fires before paint → use for measuring DOM, synchronizing scroll/animation<br/>
+            • <code>useEffect</code> fires after paint → use for everything else (fetching, subscriptions, logging)
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

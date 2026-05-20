@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>11 - Context Propagation Internals</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .render-badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+    .badge-yes { background: rgba(248,81,73,0.2); color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+    .badge-no { background: rgba(63,185,80,0.2); color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+    .tree-node { border: 1px solid #333; border-radius: 6px; padding: 10px 14px; margin: 4px 0; font-size: 12px; font-family: monospace; position: relative; }
+    .tree-node.ctx-consumer { border-color: #89b4fa; background: #0d1a2a; }
+    .tree-node.memo-wrapped { border-color: #3fb950; background: #0d1a0d; }
+    .tree-node.skipped { border-color: #333; background: #111; opacity: 0.6; }
+    .tree-node.re-rendered { border-color: #f85149; background: #1a0d0d; animation: flash 0.4s; }
+    @keyframes flash { 0% { background: #3a1a1a; } 100% { background: #1a0d0d; } }
+    .render-count { font-size: 10px; color: #888; float: right; }
+    .indent { padding-left: 20px; border-left: 1px dashed #333; margin-left: 10px; }
+    .ctx-label { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: rgba(137,180,250,0.15); color: #89b4fa; margin-left: 6px; }
+    .memo-label { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: rgba(63,185,80,0.15); color: #3fb950; margin-left: 6px; }
+    .log-box { background: #0d1117; border-radius: 6px; padding: 10px; font-size: 11px; font-family: monospace; max-height: 150px; overflow-y: auto; margin-top: 10px; }
+    .log-ctx { color: #89b4fa; }
+    .log-skip { color: #3fb950; }
+    .log-render { color: #f85149; }
+    .log-info { color: #555; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useContext, createContext, memo, useRef, useCallback } = React;
+
+    // ─── Context Setup ───────────────────────────────────────────────
+    const ThemeContext = createContext({ theme: 'dark', accent: '#89b4fa' });
+    const CountContext = createContext(0);
+
+    // ─── Render log ──────────────────────────────────────────────────
+    const renderLog = [];
+    function logRender(name, reason) {
+      renderLog.unshift({ name, reason, t: Date.now() });
+      if (renderLog.length > 30) renderLog.pop();
+    }
+
+    // ─── Consumer components ─────────────────────────────────────────
+    function DeepConsumer() {
+      const theme = useContext(ThemeContext);
+      const renderRef = useRef(0); renderRef.current++;
+      logRender('DeepConsumer', 'context changed');
+      return (
+        <div className="tree-node ctx-consumer">
+          DeepConsumer <span className="ctx-label">useContext(ThemeContext)</span>
+          <span className="render-count">renders: {renderRef.current}</span>
+          <div style={{ fontSize: 11, color: theme.accent, marginTop: 4 }}>accent: {theme.accent}</div>
+        </div>
+      );
+    }
+
+    const MemoMiddle = memo(function MemoMiddle({ children }) {
+      const renderRef = useRef(0); renderRef.current++;
+      logRender('MemoMiddle', 'memo wrapper');
+      return (
+        <div className="tree-node memo-wrapped">
+          MemoMiddle <span className="memo-label">React.memo</span>
+          <span className="render-count">renders: {renderRef.current}</span>
+          <div className="indent" style={{ marginTop: 8 }}>
+            {children}
+          </div>
+        </div>
+      );
+    });
+
+    function NonConsumer() {
+      const renderRef = useRef(0); renderRef.current++;
+      logRender('NonConsumer', 'parent re-rendered');
+      return (
+        <div className="tree-node">
+          NonConsumer <span style={{ fontSize: 10, color: '#555', marginLeft: 6 }}>no context</span>
+          <span className="render-count">renders: {renderRef.current}</span>
+        </div>
+      );
+    }
+
+    function CountConsumer() {
+      const count = useContext(CountContext);
+      const renderRef = useRef(0); renderRef.current++;
+      logRender('CountConsumer', 'CountContext changed');
+      return (
+        <div className="tree-node ctx-consumer">
+          CountConsumer <span className="ctx-label">useContext(CountContext)</span>
+          <span className="render-count">renders: {renderRef.current}</span>
+          <div style={{ fontSize: 11, color: '#a855f7', marginTop: 4 }}>count = {count}</div>
+        </div>
+      );
+    }
+
+    // ─── Main Demo ───────────────────────────────────────────────────
+    function ContextPropagationDemo() {
+      const [theme, setTheme] = useState({ theme: 'dark', accent: '#89b4fa' });
+      const [count, setCount] = useState(0);
+      const [unrelated, setUnrelated] = useState(0);
+      const [log, setLog] = useState([]);
+
+      function flush(label) {
+        const snapshot = renderLog.splice(0);
+        setLog(prev => [{ label, entries: snapshot }, ...prev].slice(0, 5));
+      }
+
+      function changeTheme() {
+        const colors = ['#89b4fa', '#a855f7', '#3fb950', '#f9e2af', '#f38ba8'];
+        const next = colors[(colors.indexOf(theme.accent) + 1) % colors.length];
+        renderLog.length = 0;
+        setTheme({ theme: 'dark', accent: next });
+        setTimeout(() => flush('Theme changed'), 50);
+      }
+
+      function changeCount() {
+        renderLog.length = 0;
+        setCount(c => c + 1);
+        setTimeout(() => flush('Count changed'), 50);
+      }
+
+      function triggerUnrelated() {
+        renderLog.length = 0;
+        setUnrelated(x => x + 1);
+        setTimeout(() => flush('Unrelated state changed'), 50);
+      }
+
+      return (
+        <div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            <button onClick={changeTheme}>Change Theme (ThemeContext)</button>
+            <button onClick={changeCount}>Change Count (CountContext)</button>
+            <button onClick={triggerUnrelated}>Unrelated State (no context change)</button>
+          </div>
+          <div style={{ fontSize: 12, color: '#555', marginBottom: 10 }}>unrelated state: {unrelated}</div>
+
+          <CountContext.Provider value={count}>
+            <ThemeContext.Provider value={theme}>
+              <div className="tree-node" style={{ borderColor: '#a855f7', background: '#1a0a2a' }}>
+                Provider (ThemeContext + CountContext)
+                <div className="indent" style={{ marginTop: 8 }}>
+                  <NonConsumer />
+                  <MemoMiddle>
+                    <DeepConsumer />
+                  </MemoMiddle>
+                  <CountConsumer />
+                </div>
+              </div>
+            </ThemeContext.Provider>
+          </CountContext.Provider>
+
+          {log.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>Last action: {log[0]?.label}</div>
+              <div className="log-box">
+                {log[0]?.entries.map((e, i) => (
+                  <div key={i} className="log-render">↻ {e.name} re-rendered</div>
+                ))}
+                {log[0]?.entries.length === 0 && <div className="log-info">No re-renders captured</div>}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>11 — Context Propagation Internals</h1>
+          <p className="desc">
+            When a Context value changes, React walks the fiber tree looking for consumers.
+            It bypasses <code>React.memo</code> and <code>shouldComponentUpdate</code> — context changes
+            always reach consumers, even through memoized components.
+          </p>
+
+          <div className="layout">
+            <div className="panel">
+              <h2>Live Propagation Demo</h2>
+              <ContextPropagationDemo />
+            </div>
+
+            <div className="panel">
+              <h2>How Context Propagation Works</h2>
+              <div className="code">
+                <div className="cm">// createContext creates two fiber types:</div>
+                <div><span className="cm">// ReactContext object ↓</span></div>
+                <div>{'{'}</div>
+                <div>&nbsp;&nbsp;$$typeof: REACT_CONTEXT_TYPE,</div>
+                <div>&nbsp;&nbsp;_currentValue: defaultValue,</div>
+                <div>&nbsp;&nbsp;_currentValue2: defaultValue, <span className="cm">// concurrent</span></div>
+                <div>&nbsp;&nbsp;Consumer: context, <span className="cm">// same object</span></div>
+                <div>&nbsp;&nbsp;Provider: {'{'} $$typeof: REACT_PROVIDER_TYPE {'}'}</div>
+                <div>{'}'}</div>
+                <br/>
+                <div className="cm">// When Provider value changes:</div>
+                <div><span className="kw">function</span> <span className="fn-name">propagateContextChange</span>(fiber, ctx) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="cm">// Walk fiber subtree</span></div>
+                <div>&nbsp;&nbsp;<span className="kw">let</span> node = fiber.child;</div>
+                <div>&nbsp;&nbsp;<span className="kw">while</span> (node !== null) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">if</span> (node.type === ctx) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Found a consumer — schedule update</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;scheduleUpdateOnFiber(node);</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Mark all ancestors with childLanes</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;markUpdateLaneFromFiberToRoot(node);</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;{'}'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// Skip subtrees not subscribing to this ctx</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;node = nextNode(node, fiber);</div>
+                <div>&nbsp;&nbsp;{'}'}</div>
+                <div>{'}'}</div>
+                <br/>
+                <div className="cm">// useContext reads from context._currentValue</div>
+                <div className="cm">// and subscribes the fiber to the context</div>
+                <div><span className="kw">function</span> <span className="fn-name">readContext</span>(context) {'{'}</div>
+                <div>&nbsp;&nbsp;pushDependency(currentFiber, context);</div>
+                <div>&nbsp;&nbsp;<span className="kw">return</span> context._currentValue;</div>
+                <div>{'}'}</div>
+              </div>
+
+              <div className="explain">
+                <strong style={{ color: '#89b4fa' }}>Key insight: memo doesn't block context</strong><br/><br/>
+                <code>React.memo</code> checks if <strong>props</strong> changed. But context is not a prop —
+                it's read directly from the context object. When the Provider value changes,
+                React marks all consumers' fibers for update via <code>propagateContextChange</code>,
+                bypassing memo's bailout check.<br/><br/>
+                <strong>What does memo block?</strong><br/>
+                If a memo'd component is <em>not</em> a consumer but has a consumer as a child,
+                the memo component itself won't re-render — but React still walks into its children
+                to find and update the consumer. This is the "context punches through memo" behavior.<br/><br/>
+                <strong>Object.is comparison:</strong> Context change is detected with <code>Object.is(oldValue, newValue)</code>.
+                Passing a new object literal <code>{'{ value: 1 }'}</code> every render = always triggers
+                propagation even if the data is the same. Use <code>useMemo</code> or <code>useState</code>
+                for stable context values.
+              </div>
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>Context Performance Patterns</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div className="code">
+                  <div style={{ color: '#f85149', marginBottom: 8, fontSize: 11 }}>❌ BAD — new object every render</div>
+                  <div><span className="kw">function</span> <span className="fn-name">Provider</span>() {'{'}</div>
+                  <div>&nbsp;&nbsp;<span className="kw">const</span> [user, setUser] = useState(null);</div>
+                  <div>&nbsp;&nbsp;<span className="cm">// New object on every render!</span></div>
+                  <div>&nbsp;&nbsp;<span className="kw">return</span> &lt;Ctx.Provider <span className="kw">value</span>={'{{ user, setUser }}'}&gt;</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;{'{'}children{'}'}</div>
+                  <div>&nbsp;&nbsp;&lt;/Ctx.Provider&gt;;</div>
+                  <div>{'}'}</div>
+                </div>
+                <div className="code">
+                  <div style={{ color: '#3fb950', marginBottom: 8, fontSize: 11 }}>✅ GOOD — split contexts or useMemo</div>
+                  <div><span className="kw">function</span> <span className="fn-name">Provider</span>() {'{'}</div>
+                  <div>&nbsp;&nbsp;<span className="kw">const</span> [user, setUser] = useState(null);</div>
+                  <div>&nbsp;&nbsp;<span className="kw">const</span> value = useMemo(</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;() =&gt; {'{'} user, setUser {'}'},</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;[user] <span className="cm">// only changes when user changes</span></div>
+                  <div>&nbsp;&nbsp;);</div>
+                  <div>&nbsp;&nbsp;<span className="kw">return</span> &lt;Ctx.Provider <span className="kw">value</span>={'{value}'}&gt;</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;{'{'}children{'}'}</div>
+                  <div>&nbsp;&nbsp;&lt;/Ctx.Provider&gt;;</div>
+                  <div>{'}'}</div>
+                </div>
+                <div className="code">
+                  <div style={{ color: '#f9e2af', marginBottom: 8, fontSize: 11 }}>✅ BEST — split into state + dispatch contexts</div>
+                  <div><span className="cm">// State consumers re-render on data change</span></div>
+                  <div>&lt;StateCtx.Provider value={'{state}'}>&gt;</div>
+                  <div>&nbsp;&nbsp;<span className="cm">// Dispatch never changes — stable ref</span></div>
+                  <div>&nbsp;&nbsp;&lt;DispatchCtx.Provider value={'{dispatch}'}>&gt;</div>
+                  <div>&nbsp;&nbsp;&nbsp;&nbsp;{'{'}children{'}'}</div>
+                  <div>&nbsp;&nbsp;&lt;/DispatchCtx.Provider&gt;</div>
+                  <div>&lt;/StateCtx.Provider&gt;</div>
+                  <br/>
+                  <div className="cm">// Components that only dispatch never re-render</div>
+                  <div className="cm">// when state changes — they only use DispatchCtx</div>
+                </div>
+                <div className="explain" style={{ marginTop: 0 }}>
+                  <strong style={{ color: '#89b4fa' }}>Context vs Zustand/Redux</strong><br/><br/>
+                  React Context re-renders <em>all</em> consumers when value changes — no selector support.
+                  If 100 components use the same context and only one cares about a changed field,
+                  all 100 re-render.<br/><br/>
+                  Zustand/Redux use <strong>selectors</strong>: each component subscribes to a slice,
+                  and only re-renders if that slice changed (via shallow equality).<br/><br/>
+                  For large apps: use Context for stable values (theme, locale, dispatch) and an
+                  external store (Zustand, Redux, Jotai) for frequently-changing data.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

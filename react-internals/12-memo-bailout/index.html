@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>12 - React.memo & Bailout Internals</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 40px; background: #0f0f0f; color: #e0e0e0; }
+    h1 { margin-bottom: 8px; color: #fff; }
+    p.desc { color: #888; margin-bottom: 28px; font-size: 14px; line-height: 1.6; }
+    .layout { display: flex; gap: 20px; flex-wrap: wrap; }
+    .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 20px; flex: 1; min-width: 300px; }
+    .panel h2 { font-size: 14px; color: #89b4fa; margin-bottom: 14px; }
+    button { padding: 7px 14px; background: #21262d; color: #cdd6f4; border: 1px solid #30363d; border-radius: 6px; cursor: pointer; font-size: 12px; margin-right: 6px; margin-bottom: 8px; }
+    button:hover { background: #30363d; }
+    .code { background: #0d1117; border-radius: 8px; padding: 14px; font-family: monospace; font-size: 12px; line-height: 1.8; margin-top: 14px; }
+    .kw { color: #cba6f7; }
+    .fn-name { color: #89b4fa; }
+    .cm { color: #6c7086; }
+    .str { color: #a6e3a1; }
+    .explain { background: #111; border-radius: 8px; padding: 14px; font-size: 13px; color: #cdd6f4; line-height: 1.7; margin-top: 14px; }
+    code { background: #2a2a2a; padding: 1px 5px; border-radius: 3px; color: #89b4fa; font-size: 12px; }
+    .component-box { border: 1px solid #333; border-radius: 8px; padding: 12px; margin-bottom: 10px; position: relative; transition: border-color 0.2s, background 0.2s; }
+    .component-box.bailed { border-color: #3fb950; background: #0d1a0d; }
+    .component-box.rendered { border-color: #f85149; background: #1a0d0d; }
+    .component-box.neutral { border-color: #333; background: #111; }
+    .comp-title { font-size: 12px; font-family: monospace; margin-bottom: 6px; }
+    .render-counter { font-size: 22px; font-weight: 700; color: #89b4fa; }
+    .status-badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 10px; font-weight: 700; margin-left: 8px; }
+    .status-bail { background: rgba(63,185,80,0.2); color: #3fb950; }
+    .status-rerender { background: rgba(248,81,73,0.2); color: #f85149; }
+    .comparison-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+    .comparison-table th { background: #1a1a1a; padding: 6px 10px; text-align: left; color: #888; border-bottom: 1px solid #333; }
+    .comparison-table td { padding: 8px 10px; border-bottom: 1px solid #222; vertical-align: top; }
+    .comparison-table tr:last-child td { border-bottom: none; }
+    .good { color: #3fb950; }
+    .bad { color: #f85149; }
+    .warn { color: #f9e2af; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, memo, useCallback, useMemo, useRef } = React;
+
+    // ─── Demo Components ─────────────────────────────────────────────
+
+    const PrimitiveMemo = memo(function PrimitiveMemo({ count, label }) {
+      const renders = useRef(0); renders.current++;
+      return (
+        <div className={`component-box ${renders.current > 1 ? 'rendered' : 'neutral'}`}>
+          <div className="comp-title">PrimitiveMemo — memo(Comp)</div>
+          <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>props: count={'{'}number{'}'}, label={'{'}string{'}'}</div>
+          <div className="render-counter">{renders.current}</div>
+          <div style={{ fontSize: 11, color: '#888' }}>renders | count={count} label="{label}"</div>
+        </div>
+      );
+    });
+
+    const ObjectPropMemo = memo(function ObjectPropMemo({ config }) {
+      const renders = useRef(0); renders.current++;
+      return (
+        <div className={`component-box rendered`}>
+          <div className="comp-title">ObjectPropMemo — memo(Comp) with object prop</div>
+          <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>props: config={'{'}object{'}'} — new ref every render!</div>
+          <div className="render-counter">{renders.current}</div>
+          <div style={{ fontSize: 11, color: '#f85149' }}>renders — memo FAILS (object reference always new)</div>
+        </div>
+      );
+    });
+
+    const CallbackMemo = memo(function CallbackMemo({ onClick }) {
+      const renders = useRef(0); renders.current++;
+      return (
+        <div className={`component-box ${renders.current > 1 ? 'neutral' : 'neutral'}`}>
+          <div className="comp-title">CallbackMemo — memo(Comp) with useCallback</div>
+          <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>props: onClick — stabilized with useCallback</div>
+          <div className="render-counter">{renders.current}</div>
+          <div style={{ fontSize: 11, color: '#3fb950' }}>renders — memo WORKS (stable callback ref)</div>
+        </div>
+      );
+    });
+
+    const CustomCompareMemo = memo(
+      function CustomCompareMemo({ user }) {
+        const renders = useRef(0); renders.current++;
+        return (
+          <div className={`component-box ${renders.current > 1 ? 'bailed' : 'neutral'}`}>
+            <div className="comp-title">CustomCompareMemo — memo(Comp, customCompare)</div>
+            <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>props: user={'{'}id, name, role{'}'} — compares by id only</div>
+            <div className="render-counter">{renders.current}</div>
+            <div style={{ fontSize: 11, color: '#89b4fa' }}>renders | user.id={user.id} name="{user.name}"</div>
+          </div>
+        );
+      },
+      (prev, next) => prev.user.id === next.user.id
+    );
+
+    function ParentDemo() {
+      const [tick, setTick] = useState(0);
+      const [userId, setUserId] = useState(1);
+
+      const stableCallback = useCallback(() => {
+        console.log('clicked');
+      }, []);
+
+      const user = { id: userId, name: userId === 1 ? 'Alice' : 'Bob', role: 'admin' };
+
+      return (
+        <div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+            <button onClick={() => setTick(t => t + 1)}>
+              Parent Re-render (tick={tick})
+            </button>
+            <button onClick={() => setUserId(id => id === 1 ? 2 : 1)}>
+              Change User ID
+            </button>
+          </div>
+          <PrimitiveMemo count={42} label="fixed" />
+          <ObjectPropMemo config={{ theme: 'dark' }} />
+          <CallbackMemo onClick={stableCallback} />
+          <CustomCompareMemo user={user} />
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <div>
+          <h1>12 — React.memo & Bailout Internals</h1>
+          <p className="desc">
+            <code>React.memo</code> wraps a component and skips re-rendering if props haven't changed
+            (using shallow equality via <code>Object.is</code>). Understanding when memo bails out vs.
+            re-renders is critical for performance optimization.
+          </p>
+
+          <div className="layout">
+            <div className="panel" style={{ flex: 2 }}>
+              <h2>Live Bailout Demo — click "Parent Re-render"</h2>
+              <ParentDemo />
+            </div>
+
+            <div className="panel" style={{ flex: 1 }}>
+              <h2>Memo Internals</h2>
+              <div className="code">
+                <div className="cm">// React.memo wraps component in special fiber</div>
+                <div><span className="kw">function</span> <span className="fn-name">memo</span>(type, compare) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">return</span> {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;$$typeof: REACT_MEMO_TYPE,</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;type, <span className="cm">// actual component</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;compare: compare ?? null,</div>
+                <div>&nbsp;&nbsp;{'}'};</div>
+                <div>{'}'}</div>
+                <br/>
+                <div className="cm">// During reconciliation (updateMemoComponent):</div>
+                <div><span className="kw">function</span> <span className="fn-name">updateMemoComponent</span>(current, wip, ...) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> compare = type.compare ?? shallowEqual;</div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> prevProps = current.memoizedProps;</div>
+                <div>&nbsp;&nbsp;<span className="kw">if</span> (compare(prevProps, nextProps)) {'{'}</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="cm">// BAILOUT — return existing fiber</span></div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;<span className="kw">return</span> bailoutOnAlreadyFinishedWork(...);</div>
+                <div>&nbsp;&nbsp;{'}'}</div>
+                <div>&nbsp;&nbsp;<span className="cm">// Re-render the wrapped component</span></div>
+                <div>&nbsp;&nbsp;<span className="kw">return</span> updateSimpleMemoComponent(...);</div>
+                <div>{'}'}</div>
+                <br/>
+                <div className="cm">// shallowEqual checks each prop with Object.is</div>
+                <div><span className="kw">function</span> <span className="fn-name">shallowEqual</span>(a, b) {'{'}</div>
+                <div>&nbsp;&nbsp;<span className="kw">if</span> (Object.is(a, b)) <span className="kw">return</span> <span className="kw">true</span>;</div>
+                <div>&nbsp;&nbsp;<span className="kw">const</span> keysA = Object.keys(a);</div>
+                <div>&nbsp;&nbsp;<span className="kw">return</span> keysA.every(k =&gt;</div>
+                <div>&nbsp;&nbsp;&nbsp;&nbsp;Object.is(a[k], b[k])</div>
+                <div>&nbsp;&nbsp;);</div>
+                <div>{'}'}</div>
+              </div>
+            </div>
+
+            <div className="panel" style={{ flex: '1 1 100%' }}>
+              <h2>When memo Bails Out vs Re-renders</h2>
+              <table className="comparison-table">
+                <thead>
+                  <tr>
+                    <th>Scenario</th>
+                    <th>Bails Out?</th>
+                    <th>Why</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['Primitive props unchanged (same number, string, boolean)', '✅ Yes', 'Object.is(42, 42) === true'],
+                    ['Object prop inline: config={{ theme: "dark" }}', '❌ No', 'New object reference every render, Object.is fails'],
+                    ['Array prop inline: items={[1,2,3]}', '❌ No', 'New array reference every render'],
+                    ['Function prop without useCallback', '❌ No', 'New function instance every render'],
+                    ['Function prop with useCallback (stable deps)', '✅ Yes', 'Same function reference — Object.is passes'],
+                    ['useMemo\'d object/array with stable deps', '✅ Yes', 'Memoized = same reference until deps change'],
+                    ['Context value changes (useContext inside)', '❌ No', 'Context bypasses memo — see lesson 11'],
+                    ['Custom compare function provided', 'Depends', 'Bails out if your compare returns true'],
+                    ['Props changed AND state changed inside', '❌ No', 'State change always forces re-render'],
+                    ['Parent re-renders but passes same props', '✅ Yes', 'This is the main use case for memo'],
+                  ].map(([scenario, bail, why]) => (
+                    <tr key={scenario}>
+                      <td style={{ color: '#cdd6f4' }}>{scenario}</td>
+                      <td className={bail.startsWith('✅') ? 'good' : bail.startsWith('❌') ? 'bad' : 'warn'}>{bail}</td>
+                      <td style={{ color: '#888' }}>{why}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+                <div className="explain">
+                  <strong style={{ color: '#89b4fa' }}>useMemo vs React.memo</strong><br/><br/>
+                  <code>React.memo</code>: memoizes a <strong>component</strong> — skips re-rendering if props unchanged.<br/><br/>
+                  <code>useMemo</code>: memoizes a <strong>computed value</strong> — skips recomputation if deps unchanged. Used inside components.<br/><br/>
+                  <code>useCallback(fn, deps)</code>: shorthand for <code>useMemo(() =&gt; fn, deps)</code> — specifically for memoizing functions.<br/><br/>
+                  Together: <code>React.memo</code> + <code>useCallback</code>/<code>useMemo</code> for stable prop refs.
+                </div>
+                <div className="explain">
+                  <strong style={{ color: '#89b4fa' }}>When NOT to use memo</strong><br/><br/>
+                  • Components that always receive different props anyway<br/>
+                  • Cheap components (memo itself has overhead)<br/>
+                  • Components with many props (more comparisons)<br/>
+                  • When children prop changes (children is always a new element)<br/><br/>
+                  <strong>Profile first.</strong> Premature memo adds complexity without guaranteed gains. The React DevTools Profiler shows which components are slow and why.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
