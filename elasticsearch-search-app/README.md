@@ -1,137 +1,156 @@
-# Elasticsearch Book Search — Full-Stack App
+# Elasticsearch Book Search — MongoDB + ES Full-Stack
 
-Full-stack search application built with **Elasticsearch 8**, **Node.js/Express**, and **React/Vite**.
+Production-grade architecture: **MongoDB** is the source of truth, **Elasticsearch** is the search
+index. They stay in sync via **MongoDB Change Streams** — writes go to Mongo only, and a background
+watcher mirrors every change to ES in real time.
 
-## Features
+```
+WRITE:  Client → POST /api/books → MongoDB ──[Change Stream]──► Elasticsearch
+SEARCH: Client → GET  /api/search ─────────────────────────────► Elasticsearch
+GET:    Client → GET  /api/books/:id ──────────────────────────► MongoDB
+```
 
-- **Full-text search** with boosted fields (`title^3`, `author^2`, `description`)
-- **Fuzziness** — typo-tolerant via `AUTO` fuzz
-- **Hit highlighting** — matched terms wrapped in `<mark>` tags
-- **Faceted filtering** — genre, year range, minimum rating
-- **Aggregations** — genre counts, avg rating, year histogram
-- **Autocomplete** — edge-ngram suggest as you type
-- **Sorting** — relevance, rating, year, title
-- **Pagination** — `from`/`size` with page window
+## Services (docker-compose)
 
-## Tech Stack
+| Container        | Port  | Purpose                          |
+|------------------|-------|----------------------------------|
+| mongodb          | 27017 | Primary DB (replica set rs0)     |
+| mongo-express    | 8081  | Mongo UI                         |
+| elasticsearch    | 9200  | Search index                     |
+| kibana           | 5601  | ES dashboard                     |
 
-| Layer         | Tech                                          |
-|---------------|-----------------------------------------------|
-| Search Engine | Elasticsearch 8 (Docker)                      |
-| Visualization | Kibana (Docker)                               |
-| Backend       | Node.js + Express + @elastic/elasticsearch v8 |
-| Frontend      | React 18 + Vite                               |
+## Project Structure
+
+```
+backend/
+├── server.js                  # Entry point — connects, starts sync, registers routes
+└── src/
+    ├── config/
+    │   ├── mongodb.js         # Mongoose connection with retry
+    │   └── elasticsearch.js   # ES client + index mapping
+    ├── models/
+    │   └── Book.js            # Mongoose schema + indexes
+    ├── repositories/
+    │   ├── bookRepo.js        # MongoDB CRUD (pure data access)
+    │   └── searchRepo.js      # ES queries (search, suggest, bulk, index, delete)
+    ├── services/
+    │   ├── bookService.js     # Business logic (validation, orchestration)
+    │   └── syncService.js     # Change Stream watcher → ES sync + resume tokens
+    ├── routes/
+    │   ├── books.js           # CRUD routes  → bookService → MongoDB
+    │   └── search.js          # Search routes → searchRepo → ES
+    └── scripts/
+        ├── seed.js            # Populate MongoDB + initial ES bulk index
+        └── reindex.js         # Rebuild ES from MongoDB (disaster recovery)
+```
 
 ## Quick Start
 
-### 1. Start Elasticsearch + Kibana
-
 ```bash
+# 1. Start all services
 docker compose up -d
-# Wait ~30s for ES to be healthy
-docker compose ps   # verify both services are Up
+# Wait ~30s for replica set init. Check with:
+docker compose logs mongo-rs-init
+
+# 2. Install dependencies
+cd backend && npm install
+
+# 3. Seed: inserts 50 books into MongoDB, bulk-indexes to ES
+npm run seed
+
+# 4. Start the backend (starts Change Stream watcher automatically)
+npm run dev
 ```
 
-Kibana → http://localhost:5601
-
-### 2. Install & seed backend
-
 ```bash
-cd backend
-cp .env.example .env
-npm install
-npm run seed     # creates index + bulk-indexes 50 books
-```
-
-### 3. Start backend
-
-```bash
-npm run dev      # http://localhost:3001
-```
-
-### 4. Install & start frontend
-
-```bash
-cd ../frontend
-npm install
-npm run dev      # http://localhost:5173
+# 5. Install and start frontend
+cd ../frontend && npm install && npm run dev
+# → http://localhost:5173
 ```
 
 ## API Reference
 
-| Method | Endpoint              | Description                                    |
-|--------|-----------------------|------------------------------------------------|
-| GET    | `/api/health`         | Elasticsearch cluster health                   |
-| GET    | `/api/stats`          | Index doc count + store size                   |
-| GET    | `/api/search`         | Full-text search with filters, facets, sorting |
-| GET    | `/api/suggest?q=`     | Autocomplete suggestions                       |
-| GET    | `/api/books/:id`      | Get single book by ID                          |
-| POST   | `/api/books`          | Index a new book                               |
-| DELETE | `/api/books/:id`      | Delete a book                                  |
+### Books (writes → MongoDB, Change Stream → ES)
 
-### Search Query Parameters
+| Method | Endpoint         | Body / Params          | Description                         |
+|--------|------------------|------------------------|-------------------------------------|
+| GET    | `/api/books`     | `?page=1&limit=20`     | List all books from MongoDB         |
+| GET    | `/api/books/:id` | —                      | Get one book from MongoDB           |
+| POST   | `/api/books`     | JSON body              | Create → MongoDB → ES auto-synced   |
+| PATCH  | `/api/books/:id` | JSON body (partial)    | Update → MongoDB → ES auto-synced   |
+| DELETE | `/api/books/:id` | —                      | Delete → MongoDB → ES auto-synced   |
 
-| Param       | Type   | Example          | Description                              |
-|-------------|--------|------------------|------------------------------------------|
-| `q`         | string | `?q=dystopia`    | Full-text query                          |
-| `genre`     | string | `&genre=Fantasy` | Filter by genre (exact keyword)          |
-| `minYear`   | int    | `&minYear=2000`  | Published after year                     |
-| `maxYear`   | int    | `&maxYear=2020`  | Published before year                    |
-| `minRating` | float  | `&minRating=4.0` | Minimum rating                           |
-| `sort`      | string | `&sort=rating_desc` | relevance, rating_desc/asc, year_desc/asc, title_asc |
-| `page`      | int    | `&page=2`        | Page number (default 1)                  |
-| `size`      | int    | `&size=10`       | Results per page (default 10)            |
+### Search (reads → Elasticsearch only)
 
-### Example cURL calls
+| Method | Endpoint              | Params                                          |
+|--------|-----------------------|-------------------------------------------------|
+| GET    | `/api/search`         | `q, genre, minYear, maxYear, minRating, sort, page, size` |
+| GET    | `/api/search/suggest` | `q`                                             |
+
+### Monitoring
+
+| Method | Endpoint      | Response                                             |
+|--------|---------------|------------------------------------------------------|
+| GET    | `/api/health` | MongoDB + ES status                                  |
+| GET    | `/api/stats`  | Doc counts from both stores + `inSync` boolean       |
+
+## Live Sync Demo
+
+With the server running, open a new terminal and POST a book:
 
 ```bash
-# Full-text search
-curl "http://localhost:3001/api/search?q=mars+survival"
-
-# Filter: Fantasy books rated 4+
-curl "http://localhost:3001/api/search?genre=Fantasy&minRating=4"
-
-# Sort by year descending, page 2
-curl "http://localhost:3001/api/search?sort=year_desc&page=2"
-
-# Autocomplete
-curl "http://localhost:3001/api/suggest?q=dune"
-
-# Add a book
-curl -X POST http://localhost:3001/api/books \
+curl -s -X POST http://localhost:3001/api/books \
   -H "Content-Type: application/json" \
-  -d '{"title":"Neuromancer","author":"William Gibson","genre":"Science Fiction","year":1984,"rating":4.0,"pages":271,"description":"The quintessential cyberpunk novel following a washed-up hacker hired for one last job."}'
+  -d '{
+    "title": "Neuromancer",
+    "author": "William Gibson",
+    "genre": "Science Fiction",
+    "year": 1984,
+    "rating": 4.0,
+    "pages": 271,
+    "description": "The quintessential cyberpunk novel — a washed-up hacker hired for one last job."
+  }' | jq .
+
+# Within ~100ms it appears in search:
+curl -s "http://localhost:3001/api/search?q=cyberpunk" | jq '.hits[].title'
 ```
 
-## Index Mapping Highlights
+## How Change Stream Sync Works
 
-```json
-{
-  "title": {
-    "type": "text",
-    "analyzer": "english",
-    "fields": {
-      "keyword":      { "type": "keyword" },
-      "autocomplete": { "type": "text", "analyzer": "autocomplete_analyzer" }
-    }
-  },
-  "genre":  { "type": "keyword" },
-  "year":   { "type": "integer" },
-  "rating": { "type": "float" }
-}
+```
+server.js starts
+  └── startSync()
+        └── Book.watch([], { fullDocument: 'updateLookup' })
+              │
+              ├── 'insert'  → esClient.index(doc)
+              ├── 'update'  → esClient.index(fullDocument)   ← full doc via updateLookup
+              ├── 'replace' → esClient.index(fullDocument)
+              └── 'delete'  → esClient.delete(id)
+
+Resume tokens (stored in MongoDB _sync_tokens collection):
+  - On each successful event: save change._id as the resume token
+  - On restart: Book.watch([], { resumeAfter: savedToken })
+  - On ChangeStreamHistoryLost: clear token, alert to run npm run reindex
 ```
 
-The `autocomplete_analyzer` uses an **edge_ngram** filter (min_gram: 2, max_gram: 20)
-to enable prefix matching as the user types.
+## Recovery: When ES Falls Behind
 
-## Key Elasticsearch Concepts Demonstrated
+Run this any time ES and MongoDB diverge (oplog expiry, ES downtime, etc.):
 
-- **Multi-match query** with field boosting
-- **Bool query** with `must` + `filter` clauses (filter = no scoring)
-- **Fuzzy matching** (`fuzziness: AUTO`)
-- **Term/range filters** (genre keyword, year range, rating range)
-- **Aggregations** — terms, range, histogram, avg, min, max
-- **Highlighting** with custom pre/post tags
-- **Custom analyzers** — edge_ngram for autocomplete
-- **Bulk indexing** for seeding data
-- **Index mappings** with multi-fields
+```bash
+npm run reindex
+# Streams all MongoDB docs in batches of 100, bulk-indexes to ES
+# Prints: docs/s throughput + total time
+```
+
+## Key Design Decisions
+
+| Decision | Why |
+|---|---|
+| MongoDB replica set (rs0) | Change Streams require oplog — only available on replica sets |
+| `fullDocument: 'updateLookup'` | ES needs the whole document; partial updates alone aren't enough |
+| Resume tokens in MongoDB | Survives process restarts with no missed or duplicate events |
+| ES `_id` = MongoDB `_id.toString()` | 1:1 mapping enables safe upserts and deletes |
+| No writes directly to ES | ES is a read model only — prevents split-brain |
+| Separate seed + reindex scripts | Seeding bypasses Change Stream (not running yet); reindex for recovery |
+| `inSync` field on /api/stats | Quick drift detection in monitoring |
