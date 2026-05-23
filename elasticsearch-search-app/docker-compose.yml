@@ -1,12 +1,55 @@
 version: '3.8'
 
 services:
+  # ── MongoDB (replica set required for Change Streams) ────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: es-mongodb
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping').ok", "--quiet"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+
+  # One-shot init container: turns the standalone mongod into a replica set
+  mongo-rs-init:
+    image: mongo:7
+    container_name: es-mongo-init
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: "no"
+    command: >
+      mongosh --host mongodb:27017 --eval
+      "try { rs.status(); print('rs already initialized') }
+       catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}); print('rs initialized') }"
+
+  # Mongo UI — http://localhost:8081
+  mongo-express:
+    image: mongo-express:latest
+    container_name: es-mongo-express
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017/?replicaSet=rs0
+      ME_CONFIG_BASICAUTH: "false"
+    depends_on:
+      mongo-rs-init:
+        condition: service_completed_successfully
+
+  # ── Elasticsearch ─────────────────────────────────────────────────────────────
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
     container_name: es-search-app
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false      # disabled for local dev
+      - xpack.security.enabled=false
       - xpack.security.http.ssl.enabled=false
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
@@ -14,11 +57,12 @@ services:
     volumes:
       - esdata:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
       interval: 10s
       timeout: 10s
       retries: 10
 
+  # Kibana — http://localhost:5601
   kibana:
     image: docker.elastic.co/kibana/kibana:8.12.0
     container_name: es-kibana
@@ -31,4 +75,5 @@ services:
         condition: service_healthy
 
 volumes:
+  mongodata:
   esdata:

@@ -3,14 +3,16 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node --watch server.js",
-    "start": "node server.js",
-    "seed": "node src/seed.js"
+    "dev":     "node --watch server.js",
+    "start":   "node server.js",
+    "seed":    "node src/scripts/seed.js",
+    "reindex": "node src/scripts/reindex.js"
   },
   "dependencies": {
     "@elastic/elasticsearch": "^8.12.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.1",
-    "express": "^4.18.2"
+    "cors":     "^2.8.5",
+    "dotenv":   "^16.4.1",
+    "express":  "^4.18.2",
+    "mongoose": "^8.2.0"
   }
 }
